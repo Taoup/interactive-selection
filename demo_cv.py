@@ -9,12 +9,14 @@ from matplotlib import pyplot as plt
 from torch.nn.functional import upsample
 from modeling.deeplab import *
 from dataloaders import helpers as helpers
-from dataloaders.custom_transforms import SimUserInput
+from dataloaders import custom_transforms as tr
+from torchvision import transforms
 
 pad = 50
 thres = 0.8
 gpu_id = 0
 device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
+# device = torch.device('cpu')
 
 net = DeepLab(num_classes=2,
               backbone='xception',
@@ -22,8 +24,8 @@ net = DeepLab(num_classes=2,
               sync_bn=False,
               freeze_bn=True)
 #  Create the network and load the weights
-model_dir = './run/pascal/deeplab-xception'
-model_path = os.path.join(model_dir, 'checkpoint_1.pth.tar')
+model_dir = './run/pascal/deeplab-xception/'
+model_path = os.path.join(model_dir, 'model_best.pth.tar')
 print("Initializing weights from: {}".format(model_path))
 # state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
 checkpoint = torch.load(model_path)
@@ -70,16 +72,21 @@ def mouse_cb(event, x, y, flag, para):
             neg_points.append((y - rect[0][1],x - rect[0][0]))
 
 
-image = np.array(Image.open('ims/bear.jpg'))
+image = np.array(Image.open('ims/dog-cat.jpg'))
 
-tr = SimUserInput()
+user_interaction = tr.SimUserInput()
+test_transformer = transforms.Compose([
+    tr.Normalize(),
+    tr.ConcatInputs(elems=('crop_image', 'neg_map', 'pos_map')),
+])
+
 im_disp = image.copy()
 cv2.namedWindow('image')
 cv2.setMouseCallback('image', mouse_cb)
 prev_total_len = -1
 with torch.no_grad():
     while 1:
-        cv2.imshow('image', im_disp)
+        cv2.imshow('image', cv2.cvtColor(im_disp, cv2.COLOR_RGB2BGR))
         key = cv2.waitKey(1)
         if key & 0xff == ord('q'):
             exit(0)
@@ -94,31 +101,31 @@ with torch.no_grad():
 
         if len(rect) == 2 and prev_total_len != (len(pos_points) + len(neg_points)):
             prev_total_len = len(pos_points) + len(neg_points)
+            sample = {}
 
             crop_image = image[rect[0][1]:rect[1][1], rect[0][0]:rect[1][0], :]
-            pos_map = tr.gen_EDM(pos_points, crop_image.shape[:2], 60)
-            neg_map = tr.gen_EDM(neg_points, crop_image.shape[:2], 60)
-            # cv2.imshow('pos map', pos_map)
-            # cv2.imshow('neg map', neg_map)
+            pos_map = user_interaction.gen_EDM(pos_points, crop_image.shape[:2], sigma=45)
+            neg_map = user_interaction.gen_EDM(neg_points, crop_image.shape[:2], sigma=25)
             resize_image = helpers.fixed_resize(crop_image, (512, 512)).astype(np.float32)
             pos_map = helpers.fixed_resize(pos_map, (512, 512)).astype(np.float32)
             neg_map = helpers.fixed_resize(neg_map, (512, 512)).astype(np.float32)
-            #  Concatenate inputs and convert to tensor
-            concat = np.concatenate((resize_image, neg_map[..., np.newaxis]), axis=2)
-            concat = np.concatenate((concat, pos_map[..., np.newaxis]), axis=2).astype(np.float32)
-            concat = concat / 255
-            inputs = torch.from_numpy(concat.transpose((2, 0, 1))[np.newaxis, ...])
+            sample['crop_image'] = resize_image
+            sample['pos_map'] = pos_map
+            sample['neg_map'] = neg_map
+            sample = test_transformer(sample)
+            cv2.imshow('pos map', sample['pos_map'])
+            cv2.imshow('neg map', sample['neg_map'])
+            inputs = torch.from_numpy(sample['concat'].transpose((2, 0, 1))[np.newaxis, ...])
 
             # Run a forward pass
             inputs = inputs.to(device)
-            outputs = net.forward(inputs)
-            outputs = outputs.to(torch.device('cpu'))
+            outputs = net(inputs)
+            pred = outputs.data.cpu().numpy()
 
-            pred = np.transpose(outputs.data.numpy()[0, ...], (1, 2, 0))
-            pred = np.argmax(pred, axis=2)
-            shape = crop_image.shape[:2]
-            pred = cv2.resize(pred, shape[::-1], interpolation=cv2.INTER_NEAREST)
+            pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
+            pred = cv2.resize(pred, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+            pred = pred * 255
+            cv2.imshow('mask', pred)
             show_image = crop_image.copy()
-            show_image[..., 2] = show_image[..., 2] + pred * 255
-            cv2.imshow('result', show_image)
-
+            show_image[..., 2] = cv2.add(show_image[..., 2], pred)
+            cv2.imshow('result', cv2.cvtColor(show_image, cv2.COLOR_RGB2BGR))

@@ -2,9 +2,7 @@ class Path(object):
     @staticmethod
     def db_root_dir(dataset):
         if dataset == 'pascal':
-            # return '/data/mht/datasets/VOCdevkit/VOC2012/'  # folder that contains VOCdevkit/.
-            return '/data/mht/datasets'  # folder that contains VOCdevkit/.
-            # return 'D:\\datasets\\'
+            return 'D:\\datasets\\'
         elif dataset == 'sbd':
             return '/path/to/datasets/benchmark_RELEASE/'  # folder that contains dataset/.
         elif dataset == 'cityscapes':

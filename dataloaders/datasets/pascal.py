@@ -32,7 +32,7 @@ class VOCSegmentation(data.Dataset):
                  transform=None,
                  download=False,
                  preprocess=False,
-                 area_thres=0,
+                 area_thres=625,
                  retname=True,
                  suppress_void_pixels=True,
                  default=False):
@@ -271,34 +271,27 @@ if __name__ == '__main__':
 
     transform = transforms.Compose([tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
                                     tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
-                                    tr.SimUserInput(),
-                                    tr.ToImage(norm_elem=('pos_map', 'neg_map')),
+                                    tr.Normalize(elems='crop_image'),
+                                    tr.SimUserInput(no_exp=True),
+                                    # tr.ToImage(norm_elem=('pos_map', 'neg_map')),
                                     tr.ConcatInputs(elems=('crop_image', 'neg_map', 'pos_map')),
-                                    tr.Normalize(),
-                                    tr.ToTensor()])
+                                    ])
 
     dataset = VOCSegmentation(split=['train', 'val'], transform=transform, retname=True)
     # dataset = VOCSegmentation(split=['train', 'val'], retname=True)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
-    for i, sample in enumerate(dataloader):
+    for i, sample in enumerate(dataset):
         print(sample.keys())
-        plt.figure()
-        print(sample['concat'].shape)
-        print(sample['crop_gt'].shape)
-        ss = sample['crop_gt'].numpy()[0, ...].transpose([1,2,0])
-        print(ss.shape)
-        # plt.imshow(sample['gt'].numpy()[0, ...], cmap='gray')
-        plt.subplot(221);plt.imshow(np.squeeze(sample['crop_gt'].numpy()[0, ...].transpose([1,2,0])).astype(np.int32), cmap='gray')
-        plt.subplot(222);plt.imshow(sample['crop_image'].numpy()[0, ...].transpose([1,2,0]).astype(np.int32))
-        plt.subplot(223);plt.imshow(np.squeeze(sample['neg_map'].numpy()[0, ...].transpose([1,2,0])), cmap='gray')
-        plt.subplot(224);plt.imshow(np.squeeze(sample['pos_map'].numpy()[0, ...].transpose([1,2,0])), cmap='gray')
-        # plt.figure()
-        # overlay = helpers.overlay_mask(helpers.tens2image(sample["image"]) / 255.,
-        #                                np.squeeze(helpers.tens2image(sample["gt"])))
-        # plt.imshow(overlay)
-        # plt.title(dataset.category_names[sample["meta"]["category"][0]])
-        if i == 2:
+        while 1:
+            cv2.imshow('image', np.array(sample['crop_image']))
+            cv2.imshow('crop_gt', sample['crop_gt'])
+            cv2.imshow('pos map', sample['pos_map'])
+            cv2.imshow('neg map', sample['neg_map'])
+            if cv2.waitKey(1) & 0xff == ord('q'):
+                break
+
+        if i == 1:
             break
 
     plt.show(block=True)

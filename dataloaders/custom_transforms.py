@@ -7,18 +7,25 @@ from PIL import Image, ImageFilter
 
 
 class Normalize(object):
+    def __init__(self, elems='crop_image'):
+        self.elems = elems
+        if isinstance(self.elems, str):
+            self.elems = [self.elems]
+
     def __call__(self, sample):
-        sample['concat'] = sample['concat'] / 255
+        for elem in self.elems:
+            sample[elem] = sample[elem] / 255
         return sample
 
 
 class SimUserInput(object):
     """Simulate user interaction by sample positive and negative points from labels"""
 
-    def __init__(self, n_pos=1, n_neg=2, dist=39, pos_sigma=100, neg_sigma=30):
+    def __init__(self, n_pos=4, n_neg=4, dist=39, no_exp=False, pos_sigma=100, neg_sigma=30):
         self.n_pos = n_pos
         self.n_neg = n_neg
         self.dist = dist
+        self.no_exp = no_exp
         self.pos_sigma = pos_sigma
         self.neg_sigma = neg_sigma
 
@@ -28,19 +35,27 @@ class SimUserInput(object):
         if len(cands_indice) == 0:
             # TODO: No candidate generated
             return []
+        num = np.random.randint(0, num)
         return cands_indice[np.random.randint(0, len(cands_indice), num)]
 
-    def gen_EDM(self, indice, shape, sigma=50):
+    def gen_EDM(self, indice, shape, sigma=50, no_exp=False):
         """ generate Euclidean distance map """
         gt = np.zeros(shape, dtype=np.float64)
+        if no_exp:
+            gt[...] = 255
         for idx in indice:
             xs = np.arange(0, shape[1], 1, np.float)
             ys = np.arange(0, shape[0], 1, np.float)
             ys = ys[:, np.newaxis]
 
-            euclid = np.exp(-4 * np.log(2) * ((xs - idx[1])**2 + (ys - idx[0])**2) / sigma ** 2)
-            gt = np.maximum(gt, euclid)
-        return gt.astype(np.float32)
+            if no_exp:
+                euclid = np.sqrt((xs - idx[1]) ** 2 + (ys - idx[0]) ** 2)
+                euclid[euclid > 255] = 255
+                gt = np.minimum(gt, euclid)
+            else:
+                euclid = np.exp(-4 * np.log(2) * ((xs - idx[1]) ** 2 + (ys - idx[0]) ** 2) / sigma ** 2)
+                gt = np.maximum(gt, euclid)
+        return gt.astype(np.float32) / 255 if no_exp else gt.astype(np.float32)
 
     def __call__(self, sample):
         mask = sample['crop_gt']
@@ -50,13 +65,13 @@ class SimUserInput(object):
         eroded_mask = pil_mask.filter(ImageFilter.MinFilter(size=self.dist))   # erosion
         pos_cand_mask = np.array(eroded_mask)
         pos_cand_idx = self._sample_idx_(pos_cand_mask, self.n_pos)
-        pos_map = self.gen_EDM(pos_cand_idx, mask.shape, self.pos_sigma)
+        pos_map = self.gen_EDM(pos_cand_idx, mask.shape, self.pos_sigma, self.no_exp)
         sample['pos_map'] = pos_map
         # negative map
         dilated_mask = pil_mask.filter(ImageFilter.MaxFilter(size=self.dist))   # dilation
         neg_cand_mask = (np.array(dilated_mask) != mask).astype(np.int8)
         neg_cand_idx = self._sample_idx_(neg_cand_mask, self.n_neg)
-        neg_map = self.gen_EDM(neg_cand_idx, mask.shape, self.neg_sigma)
+        neg_map = self.gen_EDM(neg_cand_idx, mask.shape, self.neg_sigma, self.no_exp)
         sample['neg_map'] = neg_map
 
         return sample
