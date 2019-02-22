@@ -5,12 +5,14 @@ import os
 import sys
 import tarfile
 import numpy as np
+import pickle
 
 import torch.utils.data as data
 from PIL import Image
 from six.moves import urllib
 import json
 from mypath import Path
+import dataloaders.custom_transforms as tr
 
 
 class VOCSegmentation(data.Dataset):
@@ -32,7 +34,7 @@ class VOCSegmentation(data.Dataset):
                  transform=None,
                  download=False,
                  preprocess=False,
-                 area_thres=625,
+                 area_thres=2500,
                  retname=True,
                  suppress_void_pixels=True,
                  default=False):
@@ -60,6 +62,9 @@ class VOCSegmentation(data.Dataset):
 
         self.obj_list_file = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
                                           '_'.join(self.split) + '_instances' + area_th_str + '.txt')
+        self.pos_neg_file = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
+                                         '_'.join(self.split) + '_instances' + area_th_str +
+                                         'pos_neg' + '.txt')
 
         if download:
             self._download()
@@ -103,12 +108,17 @@ class VOCSegmentation(data.Dataset):
         # Build the list of objects
         self.obj_list = []
         num_images = 0
+        print(len(self.pos_neg_dict))
         for ii in range(len(self.im_ids)):
             flag = False
             for jj in range(len(self.obj_dict[self.im_ids[ii]])):
                 if self.obj_dict[self.im_ids[ii]][jj] != -1:
-                    self.obj_list.append([ii, jj])
-                    flag = True
+                    key = '_'.join([self.im_ids[ii], str(self.obj_dict[self.im_ids[ii]][jj])])
+                    print(key)
+                    pos_neg_pairs = self.pos_neg_dict[key]
+                    for kk in range(len(pos_neg_pairs)):
+                        self.obj_list.append([ii, jj, kk])
+                        flag = True
             if flag:
                 num_images += 1
 
@@ -149,17 +159,25 @@ class VOCSegmentation(data.Dataset):
 
     def _check_preprocess(self):
         _obj_list_file = self.obj_list_file
-        if not os.path.isfile(_obj_list_file):
+        _pos_neg_file = self.pos_neg_file
+        if not os.path.isfile(_obj_list_file) or not os.path.isfile(_pos_neg_file):
             return False
         else:
             self.obj_dict = json.load(open(_obj_list_file, 'r'))
+            with open(_pos_neg_file, 'rb') as infile:
+                self.pos_neg_dict = pickle.load(infile)
 
             return list(np.sort([str(x) for x in self.obj_dict.keys()])) == list(np.sort(self.im_ids))
 
     def _preprocess(self):
         self.obj_dict = {}
+        self.pos_neg_dict = {}
         obj_counter = 0
+        crop = tr.CropFromMask(crop_elems=('gt',))
+        resize = tr.FixedResize(resolutions={'crop_gt': (512, 512)})
+        sim_user = tr.SimUserInput()
         for ii in range(len(self.im_ids)):
+            print(ii)
             # Read object masks and get number of objects
             _mask = np.array(Image.open(self.masks[ii]))
             _mask_ids = np.unique(_mask)
@@ -167,6 +185,24 @@ class VOCSegmentation(data.Dataset):
                 n_obj = _mask_ids[-2]
             else:
                 n_obj = _mask_ids[-1]
+
+            # Simulate user interaction
+            # For each object in each image, sample 9 pos/neg pairs
+            # 1.crop out target object; 2.resize; 3.sample
+            sample = {}
+            for i in range(n_obj):
+                obj = i + 1
+                sample['gt'] = (_mask == obj).astype(np.int8)
+                _tmp = np.where(sample['gt'] == 1)
+                pairs = []
+                if len(_tmp[0]) >= self.area_thres:
+                    sample = crop(sample)
+                    # sample = resize(sample)
+                    for ee in range(3):
+                        for dd in range(3):
+                            pos, neg = sim_user.gen_neg_pos_pair(sample['crop_gt'], ee, dd)
+                            pairs.append((pos, neg))
+                self.pos_neg_dict['_'.join([self.im_ids[ii], str(obj)])] = pairs
 
             # Get the categories from these objects
             _cats = np.array(Image.open(self.categories[ii]))
@@ -181,6 +217,8 @@ class VOCSegmentation(data.Dataset):
                 obj_counter += 1
 
             self.obj_dict[self.im_ids[ii]] = _cat_ids
+        with open(self.pos_neg_file, 'wb') as outfile:
+            pickle.dump(self.pos_neg_dict, outfile)
 
         with open(self.obj_list_file, 'w') as outfile:
             outfile.write('{{\n\t"{:s}": {:s}'.format(self.im_ids[0], json.dumps(self.obj_dict[self.im_ids[0]])))
@@ -266,10 +304,10 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import dataloaders.helpers as helpers
     import torch
-    import dataloaders.custom_transforms as tr
     from torchvision import transforms
 
-    transform = transforms.Compose([tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
+    transform = transforms.Compose([
+        tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
                                     tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
                                     tr.Normalize(elems='crop_image'),
                                     tr.SimUserInput(no_exp=True),

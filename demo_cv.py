@@ -72,7 +72,7 @@ def mouse_cb(event, x, y, flag, para):
             neg_points.append((y - rect[0][1],x - rect[0][0]))
 
 
-image = np.array(Image.open('ims/dog-cat.jpg'))
+image = np.array(Image.open('ims/tess.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
@@ -104,8 +104,8 @@ with torch.no_grad():
             sample = {}
 
             crop_image = image[rect[0][1]:rect[1][1], rect[0][0]:rect[1][0], :]
-            pos_map = user_interaction.gen_EDM(pos_points, crop_image.shape[:2], sigma=45)
-            neg_map = user_interaction.gen_EDM(neg_points, crop_image.shape[:2], sigma=25)
+            pos_map = user_interaction.gen_EDM(pos_points, crop_image.shape[:2], sigma=45, no_exp=True)
+            neg_map = user_interaction.gen_EDM(neg_points, crop_image.shape[:2], sigma=25, no_exp=True)
             resize_image = helpers.fixed_resize(crop_image, (512, 512)).astype(np.float32)
             pos_map = helpers.fixed_resize(pos_map, (512, 512)).astype(np.float32)
             neg_map = helpers.fixed_resize(neg_map, (512, 512)).astype(np.float32)
@@ -127,5 +127,5 @@ with torch.no_grad():
             pred = pred * 255
             cv2.imshow('mask', pred)
             show_image = crop_image.copy()
-            show_image[..., 2] = cv2.add(show_image[..., 2], pred)
+            show_image[..., 0] = cv2.add(show_image[..., 0], pred)
             cv2.imshow('result', cv2.cvtColor(show_image, cv2.COLOR_RGB2BGR))

@@ -7,6 +7,7 @@ from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.deeplab import *
+from modeling.rrn import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -31,14 +32,9 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = DeepLab(num_classes=self.nclass,
-                        backbone=args.backbone,
-                        output_stride=args.out_stride,
-                        sync_bn=args.sync_bn,
-                        freeze_bn=args.freeze_bn)
+        model = RRN()
 
-        train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
-                        {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
+        train_params = [{'params': model.parameters(), 'lr': args.lr}]
 
         # Define Optimizer
         optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
@@ -97,23 +93,32 @@ class Trainer(object):
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
-            image, target = sample['concat'], sample['crop_gt']
+            image, target, pos, neg = sample['crop_image'], sample['crop_gt'], sample['pos_map'], sample['neg_map']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                image, target, pos, neg = image.cuda(), target.cuda(), pos.cuda(), neg.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            output = self.model(image)
-            loss = self.criterion(output, target)
-            loss.backward()
+            out1, out2, out3 = self.model(image, pos, neg)
+            target1 = target
+            target2 = F.interpolate(target1.unsqueeze(1), scale_factor=0.5).squeeze(1)
+            target3 = F.interpolate(target2.unsqueeze(1), scale_factor=0.5).squeeze(1)
+            loss1 = self.criterion(out1, target1)
+            loss2 = self.criterion(out2, target2)
+            loss3 = self.criterion(out3, target3)
+            loss1.backward(retain_graph=True)
+            loss2.backward(retain_graph=True)
+            loss3.backward()
             self.optimizer.step()
-            train_loss += loss.item()
+            total_loss = loss1.item() + loss2.item() + loss3.item()
+            train_loss += total_loss
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
-            self.writer.add_scalar('train/total_loss_iter', loss.item(), i + num_img_tr * epoch)
+            self.writer.add_scalar('train/total_loss_iter', total_loss, i + num_img_tr * epoch)
 
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
-                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], target, output, global_step)
+                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], target, out3,
+                                             global_step)
 
         self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
@@ -136,14 +141,20 @@ class Trainer(object):
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            image, target = sample['concat'], sample['crop_gt']
+            image, target, pos, neg = sample['crop_image'], sample['crop_gt'], sample['pos_map'], sample['neg_map']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                image, target, pos, neg = image.cuda(), target.cuda(), pos.cuda(), neg.cuda()
             with torch.no_grad():
-                output = self.model(image)
-            loss = self.criterion(output, target)
-            test_loss += loss.item()
-            pred = output.data.cpu().numpy()
+                out1, out2, out3 = self.model(image, pos, neg)
+            target1 = target
+            target2 = F.interpolate(target1, scale_factor=0.5)
+            target3 = F.interpolate(target2, scale_factor=0.5)
+            loss1 = self.criterion(out1, target1)
+            loss2 = self.criterion(out2, target2)
+            loss3 = self.criterion(out3, target3)
+            total_loss = loss1.item() + loss2.item() + loss3.item()
+            test_loss += total_loss
+            pred = out3.data.cpu().numpy()
             target = target.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator

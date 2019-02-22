@@ -21,7 +21,7 @@ class Normalize(object):
 class SimUserInput(object):
     """Simulate user interaction by sample positive and negative points from labels"""
 
-    def __init__(self, n_pos=4, n_neg=4, dist=39, no_exp=False, pos_sigma=100, neg_sigma=30):
+    def __init__(self, n_pos=2, n_neg=2, dist=39, no_exp=False, pos_sigma=100, neg_sigma=30):
         self.n_pos = n_pos
         self.n_neg = n_neg
         self.dist = dist
@@ -35,7 +35,6 @@ class SimUserInput(object):
         if len(cands_indice) == 0:
             # TODO: No candidate generated
             return []
-        num = np.random.randint(0, num)
         return cands_indice[np.random.randint(0, len(cands_indice), num)]
 
     def gen_EDM(self, indice, shape, sigma=50, no_exp=False):
@@ -56,6 +55,20 @@ class SimUserInput(object):
                 euclid = np.exp(-4 * np.log(2) * ((xs - idx[1]) ** 2 + (ys - idx[0]) ** 2) / sigma ** 2)
                 gt = np.maximum(gt, euclid)
         return gt.astype(np.float32) / 255 if no_exp else gt.astype(np.float32)
+
+    def gen_neg_pos_pair(self, mask, n_pos, n_neg):
+        pil_mask = Image.fromarray(mask)
+
+        # positive map
+        eroded_mask = pil_mask.filter(ImageFilter.MinFilter(size=self.dist))  # erosion
+        pos_cand_mask = np.array(eroded_mask)
+        pos_idx = self._sample_idx_(pos_cand_mask, n_pos)
+        # negative map
+        dilated_mask = pil_mask.filter(ImageFilter.MaxFilter(size=self.dist))  # dilation
+        neg_cand_mask = (np.array(dilated_mask) != mask).astype(np.int8)
+        neg_idx = self._sample_idx_(neg_cand_mask, n_neg)
+        return pos_idx, neg_idx
+
 
     def __call__(self, sample):
         mask = sample['crop_gt']
@@ -361,7 +374,7 @@ class ToTensor(object):
                 tmp = np.squeeze(tmp)
             else:
                 tmp = tmp.transpose((2, 0, 1))
-            sample[elem] = torch.from_numpy(tmp)
+            sample[elem] = torch.from_numpy(tmp).float()
 
         return sample
 
