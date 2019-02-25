@@ -108,11 +108,8 @@ class FPbackbone(nn.Module):
         p3 = self._upsample_add(p4, self.latlayer2(c3))
         p2 = self._upsample_add(p3, self.latlayer3(c2))
 
-        # Smooth
-        p4 = self.smooth1(p4)
-        p3 = self.smooth2(p3)
         p2 = self.smooth3(p2)
-        return p2, p3, p4, p5
+        return p2
 
 
 def FPN101():

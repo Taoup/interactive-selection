@@ -7,7 +7,7 @@ from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.deeplab import *
-from modeling.rrn import *
+from modeling.forknet import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -32,7 +32,7 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = RRN()
+        model = ForkNet()
 
         train_params = [{'params': model.parameters(), 'lr': args.lr}]
 
@@ -99,9 +99,9 @@ class Trainer(object):
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
             out1, out2, out3 = self.model(image, pos, neg)
-            target1 = target
-            target2 = F.interpolate(target1.unsqueeze(1), scale_factor=0.5).squeeze(1)
-            target3 = F.interpolate(target2.unsqueeze(1), scale_factor=0.5).squeeze(1)
+            target3 = target
+            target2 = F.interpolate(target3.unsqueeze(1), scale_factor=0.5).squeeze(1)
+            target1 = F.interpolate(target2.unsqueeze(1), scale_factor=0.5).squeeze(1)
             loss1 = self.criterion(out1, target1)
             loss2 = self.criterion(out2, target2)
             loss3 = self.criterion(out3, target3)
@@ -146,9 +146,9 @@ class Trainer(object):
                 image, target, pos, neg = image.cuda(), target.cuda(), pos.cuda(), neg.cuda()
             with torch.no_grad():
                 out1, out2, out3 = self.model(image, pos, neg)
-            target1 = target
-            target2 = F.interpolate(target1, scale_factor=0.5)
-            target3 = F.interpolate(target2, scale_factor=0.5)
+            target3 = target
+            target2 = F.interpolate(target3.unsqueeze(1), scale_factor=0.5).squeeze(1)
+            target1 = F.interpolate(target2.unsqueeze(1), scale_factor=0.5).squeeze(1)
             loss1 = self.criterion(out1, target1)
             loss2 = self.criterion(out2, target2)
             loss3 = self.criterion(out3, target3)

@@ -7,34 +7,31 @@ import torch.nn.functional as F
 import math
 
 
-class Net1(nn.Module):
+class LocalizationNet(nn.Module):
     def __init__(self):
-        super(Net1, self).__init__()
-        self.conv1 = nn.Conv2d(258, 64, 3, 1, 1, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 32, 3, 1, 1, bias=False)
+        super(LocalizationNet, self).__init__()
+        self.conv1 = nn.Conv2d(3, 32, 3, 1, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 32, 3, 1, 1, bias=False)
         self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 16, 3, 1, 1, bias=False)
-        self.bn3 = nn.BatchNorm2d(16)
-        self.conv4 = nn.Conv2d(16, 4, 3, 1, 1, bias=False)
-        self.bn4 = nn.BatchNorm2d(4)
-        self.conv5 = nn.Conv2d(4, 2, 3, 1, 1, bias=False)
+        self.conv3 = nn.Conv2d(32, 64, 3, 2, 1, bias=False)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.conv4 = nn.Conv2d(64, 64, 3, 1, 1, bias=False)
+        self.bn4 = nn.BatchNorm2d(64)
 
-    def forward(self, x, pos_map, neg_map):
-        cat = torch.cat((x, pos_map, neg_map), 1)
-        out1 = F.relu(self.bn1(self.conv1(cat)))
+    def forward(self, x):
+        out1 = F.relu(self.bn1(self.conv1(x)))
         out2 = F.relu(self.bn2(self.conv2(out1)))
         out3 = F.relu(self.bn3(self.conv3(out2)))
         out4 = F.relu(self.bn4(self.conv4(out3)))
-        out5 = self.conv5(out4)
 
-        return out5
+        return out2, out4
 
 
-class Net2(nn.Module):
+class FusionNet(nn.Module):
     def __init__(self):
-        super(Net2, self).__init__()
-        self.conv1 = nn.Conv2d(260, 32, 3, 1, 1, bias=False)
+        super(FusionNet, self).__init__()
+        self.conv1 = nn.Conv2d(68, 32, 3, 1, 1, bias=False)
         self.bn1 = nn.BatchNorm2d(32)
         self.conv2 = nn.Conv2d(32, 16, 3, 1, 1, bias=False)
         self.bn2 = nn.BatchNorm2d(16)
@@ -42,8 +39,8 @@ class Net2(nn.Module):
         self.bn3 = nn.BatchNorm2d(4)
         self.conv4 = nn.Conv2d(4, 2, 3, 1, 1, bias=False)
 
-    def forward(self, prev_pred, x, pos_map, neg_map):
-        cat = torch.cat((prev_pred, x, pos_map, neg_map), 1)
+    def forward(self, prev_pred, low_x, pos_map, neg_map):
+        cat = torch.cat((prev_pred, low_x, pos_map, neg_map), 1)
         out1 = F.relu(self.bn1(self.conv1(cat)))
         out2 = F.relu(self.bn2(self.conv2(out1)))
         out3 = F.relu(self.bn3(self.conv3(out2)))
@@ -52,12 +49,28 @@ class Net2(nn.Module):
         return out4 + prev_pred
 
 
-class Net3(nn.Module):
+class PreliminaryNet(nn.Module):
     def __init__(self):
-        super(Net3, self).__init__()
-        self.conv1 = nn.Conv2d(260, 32, 3, 1, 1, bias=False)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 2, 3, 1, 1, bias=False)
+        super(PreliminaryNet, self).__init__()
+        self.conv1 = nn.Conv2d(256, 64, 3, 1, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(64, 8, 3, 1, 1, bias=False)
+        self.bn2 = nn.BatchNorm2d(8)
+        self.conv3 = nn.Conv2d(8, 2, 3, 1, 1, bias=False)
+
+    def forward(self, x):
+        out1 = F.relu(self.bn1(self.conv1(x)))
+        out2 = F.relu(self.bn2(self.conv2(out1)))
+        out3 = self.conv3(out2)
+        return out3
+
+
+class RefineNet(nn.Module):
+    def __init__(self):
+        super(RefineNet, self).__init__()
+        self.conv1 = nn.Conv2d(36, 8, 3, 1, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(8)
+        self.conv2 = nn.Conv2d(8, 2, 3, 1, 1, bias=False)
 
     def forward(self, prev_pred, x, pos_map, neg_map):
         cat = torch.cat((prev_pred, x, pos_map, neg_map), 1)
@@ -67,26 +80,26 @@ class Net3(nn.Module):
         return out2 + prev_pred
 
 
-class RRN(nn.Module):
+class ForkNet(nn.Module):
     def __init__(self):
-        super(RRN, self).__init__()
+        super(ForkNet, self).__init__()
         self.backbone = FPbackbone(Bottleneck, [2, 2, 2, 2])
-        self.net1 = Net1()
-        self.net2 = Net2()
-        self.net3 = Net3()
+        self.preliminary_net = PreliminaryNet()
+        self.loc = LocalizationNet()
+        self.fusion = FusionNet()
+        self.refine = RefineNet()
         self._init_weight()
 
     def forward(self, x, pos, neg):
-        p1, p2, p3 = self.backbone(x)
-        pos1 = F.interpolate(pos, scale_factor=0.25)
-        neg1 = F.interpolate(neg, scale_factor=0.25)
-        pred3 = self.net1(p3, pos1, neg1)  # 75*75
-        pos2 = F.interpolate(pos, scale_factor=0.5)
-        neg2 = F.interpolate(neg, scale_factor=0.5)
-        pred1_upscaled = F.interpolate(pred3, scale_factor=2)
-        pred2 = self.net2(pred1_upscaled, p2, pos2, neg2)  # 150*150
+        p1 = self.backbone(x)
+        pred1 = self.preliminary_net(p1)
+        pred1_upscaled = F.interpolate(pred1, scale_factor=2)
+        pos1 = F.interpolate(pos, scale_factor=0.5)
+        neg1 = F.interpolate(neg, scale_factor=0.5)
+        l1, l2 = self.loc(x)
+        pred2 = self.fusion(pred1_upscaled, l2, pos1, neg1)
         pred2_upscaled = F.interpolate(pred2, scale_factor=2)
-        pred1 = self.net3(pred2_upscaled, p1, pos, neg)  # 300*300
+        pred3 = self.refine(pred2_upscaled, l1, pos, neg)
         return pred1, pred2, pred3
 
     def _init_weight(self):
@@ -108,7 +121,7 @@ if __name__ == '__main__':
     pos = Variable(torch.randn([4, 1, 300, 300]))
     neg = Variable(torch.randn([4, 1, 300, 300]))
     x = Variable(torch.randn([4, 3, 300, 300]))
-    net = RRN()
+    net = ForkNet()
     out = net(x, pos, neg)
     for x in out:
         print(x.size())
