@@ -1,30 +1,8 @@
-# pytorch-deeplab-xception
-
-**Update on 2018/11/24. Release newest version code, which fix some previous issues and also add support for new backbones and multi-gpu training. For previous code, please see in `previous` branch**  
-
-### TODO
-- [x] Support different backbones
-- [x] Support VOC, SBD, Cityscapes and COCO datasets
-- [x] Multi-GPU training
-
-
-
-### Introduction
-This is a PyTorch(0.4.1) implementation of [DeepLab-V3-Plus](https://arxiv.org/pdf/1802.02611). It
-can use Modified Aligned Xception and ResNet as backbone. Currently, we train DeepLab V3 Plus
-using Pascal VOC 2012, SBD and Cityscapes datasets.
-
-![Results](doc/results.png)
-
-
+# Naive Deep interactive selection
+A in-developing repository for *deep interactive selection*
 ### Installation
 The code was tested with Anaconda and Python 3.6. After installing the Anaconda environment:
 
-0. Clone the repo:
-    ```Shell
-    git clone https://github.com/jfzhang95/pytorch-deeplab-xception.git
-    cd pytorch-deeplab-xception
-    ```
 
 1. Install dependencies:
 
@@ -64,10 +42,3 @@ Fellow steps below to train your model:
     ```Shell
     bash train_coco.sh
     ```    
-
-### Acknowledgement
-[PyTorch-Encoding](https://github.com/zhanghang1989/PyTorch-Encoding)
-
-[Synchronized-BatchNorm-PyTorch](https://github.com/vacancy/Synchronized-BatchNorm-PyTorch)
-
-[drn](https://github.com/fyu/drn)
