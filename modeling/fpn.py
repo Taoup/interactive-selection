@@ -4,6 +4,8 @@ See the paper "Feature Pyramid Networks for Object Detection" for more details.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.model_zoo as model_zoo
+import math
 
 from torch.autograd import Variable
 
@@ -37,7 +39,7 @@ class Bottleneck(nn.Module):
 
 
 class FPN(nn.Module):
-    def __init__(self, block, num_blocks):
+    def __init__(self, block, num_blocks, pretrained=False):
         super(FPN, self).__init__()
         self.in_planes = 64
 
@@ -62,6 +64,20 @@ class FPN(nn.Module):
         self.latlayer1 = nn.Conv2d(1024, 256, kernel_size=1, stride=1, padding=0)
         self.latlayer2 = nn.Conv2d(512, 256, kernel_size=1, stride=1, padding=0)
         self.latlayer3 = nn.Conv2d(256, 256, kernel_size=1, stride=1, padding=0)
+
+        self._init_weights()
+        if pretrained:
+            self._load_pretrained_model()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1] * (num_blocks - 1)
@@ -109,17 +125,25 @@ class FPN(nn.Module):
         p2 = self.smooth3(p2)
         return p2, p3, p4, p5
 
+    def _load_pretrained_model(self):
+        pretrain_dict = model_zoo.load_url('https://download.pytorch.org/models/resnet101-5d3b4d8f.pth')
+        model_dict = {}
+        state_dict = self.state_dict()
+        for k, v in pretrain_dict.items():
+            if k in state_dict:
+                model_dict[k] = v
+        state_dict.update(model_dict)
+        self.load_state_dict(state_dict)
+
 
 def FPN101():
-    # return FPN(Bottleneck, [2,4,23,3])
-    return FPN(Bottleneck, [2, 2, 2, 2])
+    return FPN(Bottleneck, [2, 4, 23, 3], pretrained=True)
+    # return FPN(Bottleneck, [2, 2, 2, 2])
 
 
-def test():
+if __name__ == '__main__':
     net = FPN101()
     fms = net(Variable(torch.randn(1, 3, 512, 512)))
     for fm in fms:
         print(fm.size())
 
-
-test()

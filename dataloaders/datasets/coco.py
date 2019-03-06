@@ -13,9 +13,9 @@ class COCOSegmentation(Dataset):
 
     def __init__(self, split='train'):
         super().__init__()
-        base_dir = '/data/mht/datasets/croudAI'
-        ann_file = os.path.join(base_dir, '{}/annotation.json'.format(split))
-        self.img_dir = os.path.join(base_dir, '{}/images'.format(split))
+        base_dir = '/data/mht/datasets/coco'
+        ann_file = os.path.join(base_dir, 'annotations', 'instances_{}2017.json'.format(split))
+        self.img_dir = os.path.join(base_dir, '{}2017/'.format(split))
         self.split = split
         self.coco = COCO(ann_file)
         self.annIds = self.coco.getAnnIds()
@@ -53,8 +53,7 @@ class COCOSegmentation(Dataset):
             tr.RandomHorizontalFlip(),
             tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (300, 300), 'crop_gt': (300, 300)}),
-            tr.SimUserInput(no_exp=True),
+            tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()
         ])
@@ -64,8 +63,7 @@ class COCOSegmentation(Dataset):
 
         composed_transforms = transforms.Compose([
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (300, 300), 'crop_gt': (300, 300)}),
-            tr.SimUserInput(no_exp=True),
+            tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()])
 

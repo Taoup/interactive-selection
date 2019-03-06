@@ -1,4 +1,5 @@
-from dataloaders.datasets import cityscapes, coco, combine_dbs, pascal, sbd
+from dataloaders.datasets import cityscapes, combine_dbs, pascal, sbd
+# from dataloaders.datasets import coco
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from dataloaders import custom_transforms as tr
@@ -10,18 +11,15 @@ def make_data_loader(args, **kwargs):
             tr.RandomHorizontalFlip(),
             tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
-            tr.SimUserInput(no_exp=True),
+            tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
             tr.Normalize(elems='crop_image'),
-            tr.ConcatInputs(elems=('crop_image', 'neg_map', 'pos_map')),
             tr.ToTensor()
         ])
         composed_transforms_val = transforms.Compose([
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
+            tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
             tr.SimUserInput(no_exp=True),
             tr.Normalize(elems='crop_image'),
-            tr.ConcatInputs(elems=('crop_image', 'neg_map', 'pos_map')),
             tr.ToTensor()])
         train_set = pascal.VOCSegmentation(split='train', transform=composed_transforms_tr)
         val_set = pascal.VOCSegmentation(split='val', transform=composed_transforms_val)

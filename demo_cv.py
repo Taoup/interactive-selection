@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 
 from torch.nn.functional import upsample
 from modeling.deeplab import *
+from modeling.correction_net.sbox_net import *
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
 from torchvision import transforms
@@ -18,13 +19,10 @@ gpu_id = 0
 device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
 # device = torch.device('cpu')
 
-net = DeepLab(num_classes=2,
-              backbone='xception',
-              output_stride=16,
-              sync_bn=False,
-              freeze_bn=True)
+net = SBoxNet()
+
 #  Create the network and load the weights
-model_dir = './run/pascal/deeplab-xception/'
+model_dir = './run/'
 model_path = os.path.join(model_dir, 'model_best.pth.tar')
 print("Initializing weights from: {}".format(model_path))
 # state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
@@ -72,12 +70,11 @@ def mouse_cb(event, x, y, flag, para):
             neg_points.append((y - rect[0][1],x - rect[0][0]))
 
 
-image = np.array(Image.open('ims/tess.jpg'))
+image = np.array(Image.open('ims/2007_000480.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
     tr.Normalize(),
-    tr.ConcatInputs(elems=('crop_image', 'neg_map', 'pos_map')),
 ])
 
 im_disp = image.copy()
@@ -104,18 +101,10 @@ with torch.no_grad():
             sample = {}
 
             crop_image = image[rect[0][1]:rect[1][1], rect[0][0]:rect[1][0], :]
-            pos_map = user_interaction.gen_EDM(pos_points, crop_image.shape[:2], sigma=45, no_exp=True)
-            neg_map = user_interaction.gen_EDM(neg_points, crop_image.shape[:2], sigma=25, no_exp=True)
-            resize_image = helpers.fixed_resize(crop_image, (512, 512)).astype(np.float32)
-            pos_map = helpers.fixed_resize(pos_map, (512, 512)).astype(np.float32)
-            neg_map = helpers.fixed_resize(neg_map, (512, 512)).astype(np.float32)
+            resize_image = helpers.fixed_resize(crop_image, (256, 256)).astype(np.float32)
             sample['crop_image'] = resize_image
-            sample['pos_map'] = pos_map
-            sample['neg_map'] = neg_map
             sample = test_transformer(sample)
-            cv2.imshow('pos map', sample['pos_map'])
-            cv2.imshow('neg map', sample['neg_map'])
-            inputs = torch.from_numpy(sample['concat'].transpose((2, 0, 1))[np.newaxis, ...])
+            inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
 
             # Run a forward pass
             inputs = inputs.to(device)

@@ -6,9 +6,7 @@ from tqdm import tqdm
 from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
-from modeling.deeplab import *
-from modeling.forknet import *
-from modeling.correction_net.bbox_net import *
+from modeling.correction_net.sbox_net import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -27,15 +25,16 @@ class Trainer(object):
         # Define Tensorboard Summary
         self.summary = TensorboardSummary(self.saver.experiment_dir)
         self.writer = self.summary.create_summary()
-        
+
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = BboxNet()
+        model = SBoxNet()
 
-        train_params = [{'params': model.parameters(), 'lr': args.lr}]
+        train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
+                        {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
 
         # Define Optimizer
         optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
@@ -44,7 +43,7 @@ class Trainer(object):
         # Define Criterion
         # whether to use class balanced weights
         if args.use_balanced_weights:
-            classes_weights_path = os.path.join(Path.db_root_dir(args.dataset), args.dataset+'_classes_weights.npy')
+            classes_weights_path = os.path.join(Path.db_root_dir(args.dataset), args.dataset + '_classes_weights.npy')
             if os.path.isfile(classes_weights_path):
                 weight = np.load(classes_weights_path)
             else:
@@ -54,12 +53,12 @@ class Trainer(object):
             weight = None
         self.criterion = SegmentationLosses(weight=weight, cuda=args.cuda).build_loss(mode=args.loss_type)
         self.model, self.optimizer = model, optimizer
-        
+
         # Define Evaluator
         self.evaluator = Evaluator(self.nclass)
         # Define lr scheduler
         self.scheduler = LR_Scheduler(args.lr_scheduler, args.lr,
-                                            args.epochs, len(self.train_loader))
+                                      args.epochs, len(self.train_loader))
 
         # Using cuda
         if args.cuda:
@@ -71,7 +70,7 @@ class Trainer(object):
         self.best_pred = 0.0
         if args.resume is not None:
             if not os.path.isfile(args.resume):
-                raise RuntimeError("=> no checkpoint found at '{}'" .format(args.resume))
+                raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             if args.cuda:
@@ -94,23 +93,16 @@ class Trainer(object):
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
-            image, target, pos, neg = sample['crop_image'], sample['crop_gt'], sample['pos_map'], sample['neg_map']
+            image, target = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                image, target, pos, neg = image.cuda(), target.cuda(), pos.cuda(), neg.cuda()
+                image, target = image.cuda(), target.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            out1, out2, out3 = self.model(image, pos, neg)
-            target3 = target
-            target2 = F.interpolate(target3.unsqueeze(1), scale_factor=0.5).squeeze(1)
-            target1 = F.interpolate(target2.unsqueeze(1), scale_factor=0.5).squeeze(1)
-            loss1 = self.criterion(out1, target1)
-            loss2 = self.criterion(out2, target2)
-            loss3 = self.criterion(out3, target3)
-            loss1.backward(retain_graph=True)
-            loss2.backward(retain_graph=True)
-            loss3.backward()
+            out1 = self.model(image)
+            loss1 = self.criterion(out1, target)
+            loss1.backward()
             self.optimizer.step()
-            total_loss = loss1.item() + loss2.item() + loss3.item()
+            total_loss = loss1.item()
             train_loss += total_loss
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
             self.writer.add_scalar('train/total_loss_iter', total_loss, i + num_img_tr * epoch)
@@ -118,7 +110,7 @@ class Trainer(object):
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
-                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], target, out3,
+                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], target, out1,
                                              global_step)
 
         self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
@@ -135,27 +127,21 @@ class Trainer(object):
                 'best_pred': self.best_pred,
             }, is_best)
 
-
     def validation(self, epoch):
         self.model.eval()
         self.evaluator.reset()
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            image, target, pos, neg = sample['crop_image'], sample['crop_gt'], sample['pos_map'], sample['neg_map']
+            image, target = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                image, target, pos, neg = image.cuda(), target.cuda(), pos.cuda(), neg.cuda()
+                image, target = image.cuda(), target.cuda()
             with torch.no_grad():
-                out1, out2, out3 = self.model(image, pos, neg)
-            target3 = target
-            target2 = F.interpolate(target3.unsqueeze(1), scale_factor=0.5).squeeze(1)
-            target1 = F.interpolate(target2.unsqueeze(1), scale_factor=0.5).squeeze(1)
-            loss1 = self.criterion(out1, target1)
-            loss2 = self.criterion(out2, target2)
-            loss3 = self.criterion(out3, target3)
-            total_loss = loss1.item() + loss2.item() + loss3.item()
+                out1 = self.model(image)
+            loss1 = self.criterion(out1, target)
+            total_loss = loss1.item()
             test_loss += total_loss
-            pred = out3.data.cpu().numpy()
+            pred = out1.data.cpu().numpy()
             target = target.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator
@@ -187,6 +173,7 @@ class Trainer(object):
                 'best_pred': self.best_pred,
             }, is_best)
 
+
 def main():
     parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
     parser.add_argument('--backbone', type=str, default='xception',
@@ -205,8 +192,8 @@ def main():
                         help='base image size')
     parser.add_argument('--crop-size', type=int, default=513,
                         help='crop image size')
-    parser.add_argument('--sync-bn', type=bool, default=None,
-                        help='whether to use sync bn (default: auto)')
+    parser.add_argument('--sync-bn', type=bool, default=False,
+                        help='whether to use sync bn (default: False)')
     parser.add_argument('--freeze-bn', type=bool, default=False,
                         help='whether to freeze bn parameters (default: False)')
     parser.add_argument('--loss-type', type=str, default='ce',
@@ -228,7 +215,7 @@ def main():
     # optimizer params
     parser.add_argument('--lr', type=float, default=None, metavar='LR',
                         help='learning rate (default: auto)')
-    parser.add_argument('--lr-scheduler', type=str, default='poly',
+    parser.add_argument('--lr-scheduler', type=str, default='cos',
                         choices=['poly', 'step', 'cos'],
                         help='lr scheduler mode: (default: poly)')
     parser.add_argument('--momentum', type=float, default=0.9,
@@ -239,7 +226,7 @@ def main():
                         help='whether use nesterov (default: False)')
     # cuda, seed and logging
     parser.add_argument('--no-cuda', action='store_true', default=
-                        False, help='disables CUDA training')
+    False, help='disables CUDA training')
     parser.add_argument('--gpu-ids', type=str, default='0',
                         help='use which gpu to train, must be a \
                         comma-separated list of integers only (default=0)')
@@ -296,9 +283,8 @@ def main():
         }
         args.lr = lrs[args.dataset.lower()] / (4 * len(args.gpu_ids)) * args.batch_size
 
-
     if args.checkname is None:
-        args.checkname = 'deeplab-'+str(args.backbone)
+        args.checkname = 'deeplab-' + str(args.backbone)
     print(args)
     torch.manual_seed(args.seed)
     trainer = Trainer(args)
