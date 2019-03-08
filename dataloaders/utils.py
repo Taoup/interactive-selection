@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import os
+from collections import OrderedDict
 
 def decode_seg_map_sequence(label_masks, dataset='pascal'):
     rgb_masks = []
@@ -99,3 +101,24 @@ def get_pascal_labels():
                        [64, 0, 128], [192, 0, 128], [64, 128, 128], [192, 128, 128],
                        [0, 64, 0], [128, 64, 0], [0, 192, 0], [128, 192, 0],
                        [0, 64, 128]])
+
+
+def load_model(model, model_path):
+    net = model
+
+    print("Initializing weights from: {}".format(model_path))
+    # state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+    checkpoint = torch.load(model_path)
+
+    # Remove the prefix .module from the model when it is trained using DataParallel
+    if 'module.' in list(checkpoint['state_dict'].keys())[0]:
+        print("test")
+        new_state_dict = OrderedDict()
+        for k, v in checkpoint['state_dict']:
+            name = k[7:]  # remove `module.` from multi-gpu training
+            new_state_dict[name] = v
+    else:
+        new_state_dict = checkpoint['state_dict']
+    net.load_state_dict(new_state_dict)
+    net.eval()
+    return net

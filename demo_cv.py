@@ -4,10 +4,7 @@ import cv2
 from collections import OrderedDict
 from PIL import Image
 import numpy as np
-from matplotlib import pyplot as plt
 
-from torch.nn.functional import upsample
-from modeling.deeplab import *
 from modeling.correction_net.sbox_net import *
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
@@ -70,7 +67,7 @@ def mouse_cb(event, x, y, flag, para):
             neg_points.append((y - rect[0][1],x - rect[0][0]))
 
 
-image = np.array(Image.open('ims/2007_000480.jpg'))
+image = np.array(Image.open('ims/building.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([

@@ -56,14 +56,14 @@ class VOCSegmentation(data.Dataset):
         self.default = default
 
         # Build the ids file
-        area_th_str = ""
+        self.area_th_str = ""
         if self.area_thres != 0:
-            area_th_str = '_area_thres-' + str(area_thres)
+            self.area_th_str = '_area_thres-' + str(area_thres)
 
         self.obj_list_file = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
-                                          '_'.join(self.split) + '_instances' + area_th_str + '.txt')
+                                          '_'.join(self.split) + '_instances' + self.area_th_str + '.txt')
         self.pos_neg_file = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
-                                         '_'.join(self.split) + '_instances' + area_th_str +
+                                         '_'.join(self.split) + '_instances' + self.area_th_str +
                                          'pos_neg' + '.txt')
 
         if download:
