@@ -6,10 +6,21 @@ import numpy as np
 import json
 import os
 from torchvision import transforms
+from PIL import Image, ImageFilter
+from scipy import ndimage
 
 
 class ClickDataset(VOCSegmentation):
-    def __init__(self, sbox_net, split='train', transform=None):
+    def __init__(self, sbox_net=None, split='train', transform=None):
+        if not sbox_net:
+            sbox_net = utils.load_model(SBoxNet(), '../../run/model_best.pth.tar')
+
+        if not transform:
+            transform = transforms.Compose([
+                tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
+                tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
+                tr.Normalize(elems='crop_image'),
+            ])
         VOCSegmentation.__init__(self,
                                  root=Path.db_root_dir('pascal'),
                                  split=split,
@@ -64,7 +75,19 @@ class ClickDataset(VOCSegmentation):
         inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
         pred = self.sbox_net(inputs)
         pred = pred.data.cpu().numpy()
+        pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
         sample['pred'] = pred
+        sample = self._simulate_user_interaction(sample)
+        return sample
+
+    def _simulate_user_interaction(self, sample):
+        pred, gt = sample['pred'], sample['crop_gt']
+        FPs = (pred > gt).astype(np.uint8)
+        FNs = (pred < gt).astype(np.uint8)
+        fp_eroded = ndimage.binary_erosion(FPs, structure=np.ones((5, 5))).astype(FPs.dtype)
+        fn_eroded = ndimage.binary_erosion(FNs, structure=np.ones((5, 5))).astype(FNs.dtype)
+        sample['fp_eroded'] = fp_eroded
+        sample['fn_eroded'] = fn_eroded
         return sample
 
 
@@ -76,15 +99,7 @@ if __name__ == '__main__':
     from modeling.correction_net.sbox_net import SBoxNet
     import cv2
 
-    sbox_net = utils.load_model(SBoxNet(), '../../run/model_best.pth.tar')
-
-    composed_transforms_tr = transforms.Compose([tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-                                                 tr.FixedResize(
-                                                     resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
-                                                 tr.Normalize(elems='crop_image'),
-                                                 ])
-
-    dataset = ClickDataset(sbox_net, transform=composed_transforms_tr)
+    dataset = ClickDataset()
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     for i, sample in enumerate(dataset):
@@ -92,15 +107,18 @@ if __name__ == '__main__':
             cv2.imshow('image', np.array(sample['crop_image']))
             cv2.imshow('crop_gt', sample['crop_gt'])
             pred = sample['pred']
-            pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
             FNs = (sample['crop_gt'] > pred).astype(np.uint8)
             FNs = FNs * 255
             FPs = (sample['crop_gt'] < pred).astype(np.uint8)
             FPs = FPs * 255
             pred = pred * 255
+            fp_eroded = sample['fp_eroded'] * 255
+            print(fp_eroded)
+            print(fp_eroded.max())
             cv2.imshow('pred', pred)
             cv2.imshow('FPs ', FPs)
             cv2.imshow('FNs ', FNs)
+            cv2.imshow('fp_eroded ', fp_eroded)
             if cv2.waitKey(1) & 0xff == ord('q'):
                 break
         if i == 4:
