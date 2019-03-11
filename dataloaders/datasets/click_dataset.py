@@ -1,4 +1,5 @@
 from dataloaders.datasets.pascal import VOCSegmentation
+from modeling.correction_net.sbox_net import SBoxNet
 from mypath import Path
 import dataloaders.custom_transforms as tr
 import torch
@@ -8,6 +9,7 @@ import os
 from torchvision import transforms
 from PIL import Image, ImageFilter
 from scipy import ndimage
+from dataloaders import utils
 
 
 class ClickDataset(VOCSegmentation):
@@ -27,7 +29,7 @@ class ClickDataset(VOCSegmentation):
                                  transform=transform,
                                  download=False,
                                  preprocess=False,
-                                 area_thres=2500,
+                                 area_thres=500,
                                  retname=True,
                                  suppress_void_pixels=True,
                                  default=False)
@@ -55,7 +57,7 @@ class ClickDataset(VOCSegmentation):
         for i in range(len(self.obj_list)):
             sample = super().__getitem__(i)
             inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
-            pred = self.sbox_net(inputs)
+            pred, pfm = self.sbox_net(inputs)
             pred = pred.data.cpu().numpy()
 
             pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
@@ -73,55 +75,71 @@ class ClickDataset(VOCSegmentation):
     def __getitem__(self, index):
         sample = super().__getitem__(index)
         inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
-        pred = self.sbox_net(inputs)
-        pred = pred.data.cpu().numpy()
-        pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
+        pred, fpm = self.sbox_net(inputs)
+        sample['fpm'] = fpm.data.cpu().numpy()
+        pred_origin = pred.data.cpu().numpy()
+        pred = np.argmax(pred_origin, axis=1)[0].astype(np.uint8)
         sample['pred'] = pred
+        sample['pred_origin'] = pred_origin
         sample = self._simulate_user_interaction(sample)
         return sample
 
     def _simulate_user_interaction(self, sample):
+        def __gen_EDM(mask):
+            mask = ndimage.binary_erosion(mask, structure=np.ones((5, 5))).astype(FPs.dtype)
+            label, num = ndimage.label(mask)
+            edm = np.zeros(mask.shape)
+            if num != 0:
+                max_label = np.argmax(ndimage.sum(mask, label, range(1, num + 1))) + 1
+                idx_xs, idx_ys = np.where(label == max_label)
+                _tmp = np.random.randint(0, len(idx_xs))
+                shape = mask.shape
+                edm = np.zeros(shape, dtype=np.float32)
+                edm[...] = 255
+                xs = np.arange(0, shape[1], 1, np.float)
+                ys = np.arange(0, shape[0], 1, np.float)
+                ys = ys[:, np.newaxis]
+                edm = np.sqrt((xs - idx_xs[_tmp]) ** 2 + (ys - idx_ys[_tmp]) ** 2)
+                edm[edm > 255] = 255
+                edm = 255 - edm
+            return edm / 255
+
         pred, gt = sample['pred'], sample['crop_gt']
         FPs = (pred > gt).astype(np.uint8)
         FNs = (pred < gt).astype(np.uint8)
-        fp_eroded = ndimage.binary_erosion(FPs, structure=np.ones((5, 5))).astype(FPs.dtype)
-        fn_eroded = ndimage.binary_erosion(FNs, structure=np.ones((5, 5))).astype(FNs.dtype)
-        sample['fp_eroded'] = fp_eroded
-        sample['fn_eroded'] = fn_eroded
+        sample['neg_map'] = __gen_EDM(FPs)
+        sample['pos_map'] = __gen_EDM(FNs)
         return sample
+
 
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import torch
     from torchvision import transforms
-    from dataloaders import utils
-    from modeling.correction_net.sbox_net import SBoxNet
     import cv2
 
     dataset = ClickDataset()
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=False, num_workers=0)
+    np.random.seed(42)
 
-    for i, sample in enumerate(dataset):
+    for i, sample in enumerate(dataloader):
         while 1:
-            cv2.imshow('image', np.array(sample['crop_image']))
-            cv2.imshow('crop_gt', sample['crop_gt'])
-            pred = sample['pred']
-            FNs = (sample['crop_gt'] > pred).astype(np.uint8)
+            cv2.imshow('image', sample['crop_image'].numpy()[0])
+            cv2.imshow('crop_gt', sample['crop_gt'].numpy()[0])
+            pred = sample['pred'].numpy()[0]
+            FNs = (sample['crop_gt'].numpy()[0] > pred).astype(np.uint8)
             FNs = FNs * 255
-            FPs = (sample['crop_gt'] < pred).astype(np.uint8)
+            FPs = (sample['crop_gt'].numpy()[0] < pred).astype(np.uint8)
             FPs = FPs * 255
             pred = pred * 255
-            fp_eroded = sample['fp_eroded'] * 255
-            print(fp_eroded)
-            print(fp_eroded.max())
-            cv2.imshow('pred', pred)
-            cv2.imshow('FPs ', FPs)
-            cv2.imshow('FNs ', FNs)
-            cv2.imshow('fp_eroded ', fp_eroded)
+            fp_eroded = sample['neg_map'].numpy()[0]
+            # cv2.imshow('pred', pred)
+            # cv2.imshow('FPs ', FPs)
+            # cv2.imshow('FNs ', FNs)
+            cv2.imshow('neg_map ', fp_eroded)
             if cv2.waitKey(1) & 0xff == ord('q'):
                 break
-        if i == 4:
-            break
+        break
 
     plt.show(block=True)

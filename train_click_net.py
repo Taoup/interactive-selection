@@ -6,7 +6,7 @@ from tqdm import tqdm
 from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
-from modeling.correction_net.sbox_net import *
+from modeling.correction_net.click_net import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -29,13 +29,11 @@ class Trainer(object):
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
-        self.train_loader
 
         # Define network
-        model = SBoxNet()
+        model = ClickNet()
 
-        train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
-                        {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
+        train_params = [{'params': model.parameters(), 'lr': args.lr}, ]
 
         # Define Optimizer
         optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
@@ -94,13 +92,13 @@ class Trainer(object):
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
-            image, target = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                for ks in sample.keys():
+                    sample[ks] = sample[ks].cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            out1, _ = self.model(image)
-            loss1 = self.criterion(out1, target)
+            out1 = self.model(sample)
+            loss1 = self.criterion(out1, sample['crop_gt'])
             loss1.backward()
             self.optimizer.step()
             total_loss = loss1.item()
@@ -111,11 +109,12 @@ class Trainer(object):
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
-                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], target, out1,
+                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], sample['crop_gt'],
+                                             out1,
                                              global_step)
 
         self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
-        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
+        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + sample['crop_image'].data.shape[0]))
         print('Loss: %.3f' % train_loss)
 
         if self.args.no_val:
@@ -134,12 +133,11 @@ class Trainer(object):
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            image, target = sample['crop_image'], sample['crop_gt']
-            if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+            for ks in sample.keys():
+                sample[ks] = sample[ks].cuda()
             with torch.no_grad():
-                out1, _ = self.model(image)
-            loss1 = self.criterion(out1, target)
+                out1 = self.model(sample)
+            loss1 = self.criterion(out1, sample['crop_gt'])
             total_loss = loss1.item()
             test_loss += total_loss
             pred = out1.data.cpu().numpy()
@@ -159,7 +157,7 @@ class Trainer(object):
         self.writer.add_scalar('val/Acc_class', Acc_class, epoch)
         self.writer.add_scalar('val/fwIoU', FWIoU, epoch)
         print('Validation:')
-        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
+        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + sample['crop_image'].data.shape[0]))
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
         print('Loss: %.3f' % test_loss)
 
@@ -183,7 +181,7 @@ def main():
     parser.add_argument('--out-stride', type=int, default=16,
                         help='network output stride (default: 8)')
     parser.add_argument('--dataset', type=str, default='pascal',
-                        choices=['pascal', 'coco', 'cityscapes'],
+                        choices=['pascal', 'coco', 'cityscapes', 'click'],
                         help='dataset name (default: pascal)')
     parser.add_argument('--use-sbd', action='store_true', default=False,
                         help='whether to use SBD dataset (default: True)')

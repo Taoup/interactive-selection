@@ -60,7 +60,7 @@ class Decoder(nn.Module):
         result = self.conv_final(pfm)
         result = F.upsample(result, scale_factor=4, mode='bilinear')
 
-        return result
+        return result, pfm
 
 
 class SBoxNet(nn.Module):
@@ -95,6 +95,6 @@ class SBoxNet(nn.Module):
 
 if __name__ == '__main__':
     x = Variable(torch.randn(5, 3, 256, 256))
-    fms = SBoxNet()
+    fms, pfm = SBoxNet()
     result = fms(x)
     print(result.size())

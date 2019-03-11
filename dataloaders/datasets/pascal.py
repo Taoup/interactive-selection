@@ -34,7 +34,7 @@ class VOCSegmentation(data.Dataset):
                  transform=None,
                  download=False,
                  preprocess=False,
-                 area_thres=2500,
+                 area_thres=500,
                  retname=True,
                  suppress_void_pixels=True,
                  default=False):
@@ -62,9 +62,6 @@ class VOCSegmentation(data.Dataset):
 
         self.obj_list_file = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
                                           '_'.join(self.split) + '_instances' + self.area_th_str + '.txt')
-        self.pos_neg_file = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
-                                         '_'.join(self.split) + '_instances' + self.area_th_str +
-                                         'pos_neg' + '.txt')
 
         if download:
             self._download()
