@@ -6,7 +6,7 @@ from tqdm import tqdm
 from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
-from modeling.correction_net.click_net import *
+from modeling.correction_net.fusion_net import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -31,9 +31,12 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = ClickNet()
+        model = FusionNet(sbox='run/pascal/deeplab-xception/model_best.pth.tar')
+        model.sbox_net.eval()
+        for para in model.sbox_net.parameters():
+            para.requires_grad = False
 
-        train_params = [{'params': model.parameters(), 'lr': args.lr}, ]
+        train_params = [{'params': model.click_net.parameters(), 'lr': args.lr}, ]
 
         # Define Optimizer
         optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
@@ -92,13 +95,13 @@ class Trainer(object):
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
+            image, gt = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                for ks in ['crop_gt', 'fpm', 'pos_map', 'neg_map', 'pred_origin']:
-                    sample[ks] = sample[ks].cuda()
+                image, gt = image.cuda(), gt.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            out1 = self.model(sample)
-            loss1 = self.criterion(out1, sample['crop_gt'])
+            out1 = self.model(image, crop_gt=gt)
+            loss1 = self.criterion(out1, gt)
             loss1.backward()
             self.optimizer.step()
             total_loss = loss1.item()
@@ -109,12 +112,12 @@ class Trainer(object):
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
-                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], sample['crop_gt'],
+                self.summary.visualize_image(self.writer, self.args.dataset, image, sample['crop_gt'],
                                              out1,
                                              global_step)
 
         self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
-        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + sample['crop_image'].data.shape[0]))
+        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print('Loss: %.3f' % train_loss)
 
         if self.args.no_val:
@@ -133,11 +136,12 @@ class Trainer(object):
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            for ks in ['crop_gt', 'fpm', 'pos_map', 'neg_map', 'pred_origin']:
-                sample[ks] = sample[ks].cuda()
+            image, gt = sample['crop_image'], sample['crop_gt']
+            if self.args.cuda:
+                image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
-                out1 = self.model(sample)
-            loss1 = self.criterion(out1, sample['crop_gt'])
+                out1 = self.model(sample, crop_gt=gt)
+            loss1 = self.criterion(out1, gt)
             total_loss = loss1.item()
             test_loss += total_loss
             pred = out1.data.cpu().numpy()
@@ -157,7 +161,7 @@ class Trainer(object):
         self.writer.add_scalar('val/Acc_class', Acc_class, epoch)
         self.writer.add_scalar('val/fwIoU', FWIoU, epoch)
         print('Validation:')
-        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + sample['crop_image'].data.shape[0]))
+        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
         print('Loss: %.3f' % test_loss)
 
@@ -174,7 +178,7 @@ class Trainer(object):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
+    parser = argparse.ArgumentParser(description="PyTorch Deep interactive object selection")
     parser.add_argument('--backbone', type=str, default='xception',
                         choices=['resnet', 'xception', 'drn', 'mobilenet'],
                         help='backbone name (default: resnet)')

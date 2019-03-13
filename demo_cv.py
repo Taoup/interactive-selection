@@ -6,6 +6,7 @@ from PIL import Image
 import numpy as np
 
 from modeling.correction_net.sbox_net import *
+from modeling.correction_net.fusion_net import *
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
 from torchvision import transforms
@@ -16,27 +17,9 @@ gpu_id = 0
 device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
 # device = torch.device('cpu')
 
-net = SBoxNet()
-
-#  Create the network and load the weights
-model_dir = './run/'
-model_path = os.path.join(model_dir, 'model_best.pth.tar')
-print("Initializing weights from: {}".format(model_path))
-# state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-checkpoint = torch.load(model_path)
-
-# Remove the prefix .module from the model when it is trained using DataParallel
-if 'module.' in list(checkpoint['state_dict'].keys())[0]:
-    print("test")
-    new_state_dict = OrderedDict()
-    for k, v in checkpoint['state_dict']:
-        name = k[7:]  # remove `module.` from multi-gpu training
-        new_state_dict[name] = v
-else:
-    new_state_dict = checkpoint['state_dict']
-net.load_state_dict(new_state_dict)
+net = FusionNet(sbox='run/model_best.pth.tar')
 net.eval()
-net.to(device)
+net = net.to(device)
 
 #  Read image and click the points
 rect_drawed = False
@@ -67,7 +50,7 @@ def mouse_cb(event, x, y, flag, para):
             neg_points.append((y - rect[0][1],x - rect[0][0]))
 
 
-image = np.array(Image.open('ims/building.jpg'))
+image = np.array(Image.open('ims/dog-cat.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([

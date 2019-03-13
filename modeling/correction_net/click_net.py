@@ -28,13 +28,13 @@ class ClickNet(nn.Module):
             nn.Conv2d(8, 2, 3, 1, 1, bias=False),
         )
 
-    def forward(self, input):
-        x = torch.cat([input['pred_origin'], input['pos_map'], input['neg_map']], dim=1)
+    def forward(self, pred, udm, fpm):
+        x = torch.cat([pred, udm], dim=1)
         x = self.downsample(x)
-        x1 = torch.cat([input['fpm'], x], dim=1)
+        x1 = torch.cat([fpm, x], dim=1)
         result = self.refine(x1)
         result = F.interpolate(result, 256, mode='bilinear')
-        return result + input['pred_origin']
+        return result + pred
 
 
 if __name__ == '__main__':

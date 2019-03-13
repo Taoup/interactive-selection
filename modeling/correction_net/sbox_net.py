@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+from collections import OrderedDict
 
 
 class Decoder(nn.Module):
@@ -41,24 +42,24 @@ class Decoder(nn.Module):
 
     def forward(self, p1, p2, p3, p4):
         out1 = F.relu(self.bn1_32(self.conv1_32(p4)))
-        out1 = F.upsample(out1, scale_factor=2, mode='bilinear')
+        out1 = F.interpolate(out1, scale_factor=2, mode='bilinear')
         out1 = F.relu(self.bn2_32(self.conv2_32(out1)))
-        out1 = F.upsample(out1, scale_factor=2, mode='bilinear')
+        out1 = F.interpolate(out1, scale_factor=2, mode='bilinear')
         out1 = F.relu(self.bn3_32(self.conv3_32(out1)))
-        out1 = F.upsample(out1, scale_factor=2, mode='bilinear')
+        out1 = F.interpolate(out1, scale_factor=2, mode='bilinear')
 
         out2 = F.relu(self.bn1_16(self.conv1_16(p3)))
-        out2 = F.upsample(out2, scale_factor=2, mode='bilinear')
+        out2 = F.interpolate(out2, scale_factor=2, mode='bilinear')
         out2 = F.relu(self.bn2_16(self.conv2_16(out2)))
-        out2 = F.upsample(out2, scale_factor=2, mode='bilinear')
+        out2 = F.interpolate(out2, scale_factor=2, mode='bilinear')
 
         out3 = F.relu(self.bn1_8(self.conv1_8(p2)))
-        out3 = F.upsample(out3, scale_factor=2, mode='bilinear')
+        out3 = F.interpolate(out3, scale_factor=2, mode='bilinear')
 
         out4 = F.relu(self.bn1_4(self.conv1_4(p1)))
         pfm = out1 + out2 + out3 + out4
         result = self.conv_final(pfm)
-        result = F.upsample(result, scale_factor=4, mode='bilinear')
+        result = F.interpolate(result, scale_factor=4, mode='bilinear')
 
         return result, pfm
 
@@ -73,6 +74,22 @@ class SBoxNet(nn.Module):
         p1, p2, p3, p4 = self.backbone(x)
         result = self.decoder(p1, p2, p3, p4)
         return result
+
+    def load(self, path):
+        print("Initializing weights from: {}".format(path))
+        # state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+        checkpoint = torch.load(path)
+
+        # Remove the prefix .module from the model when it is trained using DataParallel
+        if 'module.' in list(checkpoint['state_dict'].keys())[0]:
+            print("test")
+            new_state_dict = OrderedDict()
+            for k, v in checkpoint['state_dict']:
+                name = k[7:]  # remove `module.` from multi-gpu training
+                new_state_dict[name] = v
+        else:
+            new_state_dict = checkpoint['state_dict']
+        self.load_state_dict(new_state_dict)
 
     def get_1x_lr_params(self):
         modules = [self.backbone]
