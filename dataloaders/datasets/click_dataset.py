@@ -76,8 +76,8 @@ class ClickDataset(VOCSegmentation):
         sample = super().__getitem__(index)
         inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
         pred, fpm = self.sbox_net(inputs)
-        sample['fpm'] = fpm.data.cpu().numpy()
-        pred_origin = pred.data.cpu().numpy()
+        sample['fpm'] = fpm.data.cpu().numpy()[0]
+        pred_origin = pred.data.cpu().numpy()[0]
         pred = np.argmax(pred_origin, axis=1)[0].astype(np.uint8)
         sample['pred'] = pred
         sample['pred_origin'] = pred_origin
@@ -107,8 +107,8 @@ class ClickDataset(VOCSegmentation):
         pred, gt = sample['pred'], sample['crop_gt']
         FPs = (pred > gt).astype(np.uint8)
         FNs = (pred < gt).astype(np.uint8)
-        sample['neg_map'] = __gen_EDM(FPs)
-        sample['pos_map'] = __gen_EDM(FNs)
+        sample['neg_map'] = __gen_EDM(FPs).astype(np.float32)[np.newaxis, ...]
+        sample['pos_map'] = __gen_EDM(FNs).astype(np.float32)[np.newaxis, ...]
         return sample
 
 
@@ -124,6 +124,12 @@ if __name__ == '__main__':
     np.random.seed(42)
 
     for i, sample in enumerate(dataloader):
+        for keys in sample:
+            print(type(sample[keys]))
+            if isinstance(sample[keys], torch.Tensor):
+                print(keys)
+                print(sample[keys].type())
+                print(sample[keys].size())
         while 1:
             cv2.imshow('image', sample['crop_image'].numpy()[0])
             cv2.imshow('crop_gt', sample['crop_gt'].numpy()[0])

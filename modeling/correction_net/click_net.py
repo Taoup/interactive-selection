@@ -16,7 +16,7 @@ class ClickNet(nn.Module):
             nn.ReLU()
         )
         self.refine = nn.Sequential(
-            nn.Conv2d(320, 64, 3, 1, 1, bias=False),
+            nn.Conv2d(192, 64, 3, 1, 1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Conv2d(64, 32, 3, 1, 1, bias=False),

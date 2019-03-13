@@ -93,7 +93,7 @@ class Trainer(object):
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
             if self.args.cuda:
-                for ks in sample.keys():
+                for ks in ['crop_gt', 'fpm', 'pos_map', 'neg_map', 'pred_origin']:
                     sample[ks] = sample[ks].cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
@@ -133,7 +133,7 @@ class Trainer(object):
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            for ks in sample.keys():
+            for ks in ['crop_gt', 'fpm', 'pos_map', 'neg_map', 'pred_origin']:
                 sample[ks] = sample[ks].cuda()
             with torch.no_grad():
                 out1 = self.model(sample)
