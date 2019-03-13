@@ -31,7 +31,7 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = FusionNet(sbox='run/pascal/deeplab-xception/model_best.pth.tar')
+        model = FusionNet(sbox='run/pascal/sbox_net/model_best.pth.tar')
         model.sbox_net.eval()
         for para in model.sbox_net.parameters():
             para.requires_grad = False
@@ -140,12 +140,12 @@ class Trainer(object):
             if self.args.cuda:
                 image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
-                out1 = self.model(sample, crop_gt=gt)
+                out1 = self.model(image, crop_gt=gt)
             loss1 = self.criterion(out1, gt)
             total_loss = loss1.item()
             test_loss += total_loss
             pred = out1.data.cpu().numpy()
-            target = target.cpu().numpy()
+            target = gt.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator
             self.evaluator.add_batch(target, pred)

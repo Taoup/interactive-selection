@@ -4,6 +4,7 @@ import torch.nn as nn
 import numpy as np
 from scipy import ndimage
 
+DEBUG = False
 
 class FusionNet(nn.Module):
     def __init__(self, sbox=None, click=None):
@@ -17,16 +18,27 @@ class FusionNet(nn.Module):
 
     def forward(self, image, **input):
         sbox_pred, fpm = self.sbox_net(image)
-        if 'crop_gt' in input.keys():
+        if 'crop_gt' in input.keys():  # training or validation
             pos_map, neg_map = self._simulate_user_interaction(sbox_pred, input['crop_gt'])
-            if image.is_cuda:
-                pos_map, neg_map = pos_map.cuda(), neg_map.cuda()
-        else:
-            return sbox_pred
-            pass
+        else:  # inference with real user interaction
+            user_clicked = False
+            pos_clicks, neg_clicks = [], []
+            if 'pos_clicks' in input:
+                pos_clicks = input['pos_clicks']
+                user_clicked = True
+            if 'neg_clicks' in input:
+                neg_clicks = input['neg_clicks']
+                user_clicked = True
+            if not user_clicked:
+                # no user clicks, return result of surrounding box net directly
+                return sbox_pred
+            pos_map = self.convert_clicks(pos_clicks, image.shape[2:])
+            neg_map = self.convert_clicks(neg_clicks, image.shape[2:])
+        if image.is_cuda:
+            pos_map, neg_map = pos_map.cuda(), neg_map.cuda()
         edm = torch.cat([pos_map, neg_map], dim=1)
         click_pred = self.click_net(sbox_pred, edm, fpm)
-        return click_pred
+        return click_pred if not DEBUG else click_pred, pos_map, neg_map
 
     def _simulate_user_interaction(self, pred, gt):
         def __gen_EDM(mask):
@@ -58,10 +70,29 @@ class FusionNet(nn.Module):
         pos_map = __gen_EDM(FNs)
         return pos_map, neg_map
 
+    def convert_clicks(self, clicks, shape):
+        gt = np.zeros(shape, dtype=np.float64)
+        gt[...] = 255
+        for click in clicks:
+            xs = np.arange(0, shape[1], 1, np.float)
+            ys = np.arange(0, shape[0], 1, np.float)
+            ys = ys[:, np.newaxis]
+
+            euclid = np.sqrt((xs - click[1]) ** 2 + (ys - click[0]) ** 2)
+            euclid[euclid > 255] = 255
+            gt = np.minimum(gt, euclid)
+        gt = 1 - (gt.astype(np.float32) / 255)[np.newaxis, np.newaxis, ...]
+        return torch.from_numpy(gt)
+
 
 if __name__ == '__main__':
+    DEBUG = True
     fusion = FusionNet(sbox='../../run/model_best.pth.tar').cuda()
-    image = torch.randn((2, 3, 256, 256)).cuda()
-    gt = torch.randn((2, 256, 256)).cuda()
-    result = fusion(image, crop_gt=gt)
+    image = torch.randn((1, 3, 256, 256)).cuda()
+    gt = torch.randn((1, 256, 256)).cuda()
+    result, pos, neg = fusion(image, neg_clicks=[(40, 40), (100, 200)])
     print(result.size())
+    import matplotlib.pyplot as plt
+
+    plt.imshow(neg[0][0], cmap='gray')
+    plt.show()
