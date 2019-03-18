@@ -57,11 +57,11 @@ class Decoder(nn.Module):
         out3 = F.interpolate(out3, scale_factor=2, mode='bilinear')
 
         out4 = F.relu(self.bn1_4(self.conv1_4(p1)))
-        pfm = out1 + out2 + out3 + out4
-        result = self.conv_final(pfm)
+        fused_pfm = out1 + out2 + out3 + out4
+        result = self.conv_final(fused_pfm)
         result = F.interpolate(result, scale_factor=4, mode='bilinear')
 
-        return result, pfm
+        return result, fused_pfm
 
 
 class SBoxNet(nn.Module):
@@ -72,8 +72,8 @@ class SBoxNet(nn.Module):
 
     def forward(self, x):
         p1, p2, p3, p4 = self.backbone(x)
-        result = self.decoder(p1, p2, p3, p4)
-        return result
+        result, fused_pfm = self.decoder(p1, p2, p3, p4)
+        return result, fused_pfm
 
     def load(self, path):
         print("Initializing weights from: {}".format(path))

@@ -1,5 +1,20 @@
+
+
+
+
+训练记录：<br>
+click-net 没有头尾shortcut连接效果更好：0.8141 VS 0.8254<br>
+PFM方式的网络，在训练800epoch后，mIoU达到0.8213, 70左右epoch时大概为0.75样子<br>
+在已经训练的分割网络上进行sbox的训练，第一个epoch的mIoU就可以达到0.70样子。<br>
+
+
+
+
 # TODO:
-在预处理中去掉太小的目标物体
+sbox使用已训练的分割网络进行训练，使用较好的学习率调整策略.<br>
+更精细的learning rate schedual<br>
+加上sbox的jitter<br>
+~~在预处理中去掉太小的目标物体~~<br>
 
 ### Segmentation中处理255
 Loss函数中有个ignore_index

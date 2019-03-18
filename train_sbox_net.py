@@ -6,6 +6,7 @@ from tqdm import tqdm
 from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
+from modeling.correction_net.sbox_on_xxx import *
 from modeling.correction_net.sbox_net import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
@@ -29,7 +30,6 @@ class Trainer(object):
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
-        self.train_loader
 
         # Define network
         model = SBoxNet()

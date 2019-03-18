@@ -7,9 +7,10 @@ from modeling.decoder import build_decoder
 from modeling.backbone import build_backbone
 
 class DeepLab(nn.Module):
-    def __init__(self, backbone='resnet', output_stride=16, num_classes=2,
+    def __init__(self, backbone='resnet', output_stride=16, num_classes=21,
                  sync_bn=True, freeze_bn=False):
         super(DeepLab, self).__init__()
+        self.num_classes = num_classes
         if backbone == 'drn':
             output_stride = 8
 
@@ -25,13 +26,21 @@ class DeepLab(nn.Module):
         if freeze_bn:
             self.freeze_bn()
 
+    def train_mode(self):
+        self.backbone.eval()
+        self.aspp.eval()
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+        for p in self.aspp.parameters():
+            p.requires_grad = False
+
     def forward(self, input):
         x, low_level_feat = self.backbone(input)
-        x = self.aspp(x)
-        x = self.decoder(x, low_level_feat)
-        x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
+        pfm = self.aspp(x)
+        x = self.decoder(pfm, low_level_feat)
+        # x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
 
-        return x
+        return x, pfm, low_level_feat
 
     def freeze_bn(self):
         for m in self.modules():
@@ -44,7 +53,8 @@ class DeepLab(nn.Module):
         modules = [self.backbone]
         for i in range(len(modules)):
             for m in modules[i].named_modules():
-                if isinstance(m[1], nn.Conv2d):
+                if isinstance(m[1], nn.Conv2d) or isinstance(m[1], SynchronizedBatchNorm2d) \
+                        or isinstance(m[1], nn.BatchNorm2d):
                     for p in m[1].parameters():
                         if p.requires_grad:
                             yield p
@@ -53,17 +63,17 @@ class DeepLab(nn.Module):
         modules = [self.aspp, self.decoder]
         for i in range(len(modules)):
             for m in modules[i].named_modules():
-                if isinstance(m[1], nn.Conv2d):
+                if isinstance(m[1], nn.Conv2d) or isinstance(m[1], SynchronizedBatchNorm2d) \
+                        or isinstance(m[1], nn.BatchNorm2d):
                     for p in m[1].parameters():
                         if p.requires_grad:
                             yield p
 
 
 if __name__ == "__main__":
-    model = DeepLab(backbone='xception', output_stride=16)
+    model = DeepLab(backbone='resnet', output_stride=16)
     model.eval()
-    input = torch.rand(1, 5, 1024, 1024)
+    input = torch.rand(1, 3, 513, 513)
     output = model(input)
-    print(output.size())
-
-
+    for x in output:
+        print(x.size())

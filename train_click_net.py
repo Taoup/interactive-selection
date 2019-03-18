@@ -7,12 +7,15 @@ from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.correction_net.fusion_net import *
+from modeling.correction_net.sbox_net import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
 from utils.saver import Saver
 from utils.summaries import TensorboardSummary
 from utils.metrics import Evaluator
+from torchvision.utils import make_grid
+from dataloaders.utils import decode_seg_map_sequence
 
 
 class Trainer(object):
@@ -31,7 +34,10 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = FusionNet(sbox='run/pascal/sbox_net/model_best.pth.tar')
+        sbox = SBoxNet()
+        sbox.load('run/pascal/sbox_miou_8102.pth.tar')
+        click = ClickNet()
+        model = FusionNet(sbox=sbox, click=click)
         model.sbox_net.eval()
         for para in model.sbox_net.parameters():
             para.requires_grad = False
@@ -100,23 +106,27 @@ class Trainer(object):
                 image, gt = image.cuda(), gt.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            out1 = self.model(image, crop_gt=gt)
+            out1, click_pred = self.model(image, res=False, crop_gt=gt)
             loss1 = self.criterion(out1, gt)
             loss1.backward()
             self.optimizer.step()
             total_loss = loss1.item()
             train_loss += total_loss
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
-            self.writer.add_scalar('train/total_loss_iter', total_loss, i + num_img_tr * epoch)
+            self.writer.add_scalar('train/total_steps', total_loss, i + num_img_tr * epoch)
 
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
+                grid_image = make_grid(decode_seg_map_sequence(torch.max(click_pred[:3], 1)[1].detach().cpu().numpy(),
+                                                               dataset=self.args.dataset), 3, normalize=False,
+                                       range=(0, 255))
                 self.summary.visualize_image(self.writer, self.args.dataset, image, sample['crop_gt'],
                                              out1,
                                              global_step)
+                self.writer.add_image('click-net-corrections', grid_image, global_step)
 
-        self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
+        self.writer.add_scalar('train/total_epochs', train_loss, epoch)
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print('Loss: %.3f' % train_loss)
 
@@ -140,7 +150,7 @@ class Trainer(object):
             if self.args.cuda:
                 image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
-                out1 = self.model(image, crop_gt=gt)
+                out1, click_pred = self.model(image, crop_gt=gt)
             loss1 = self.criterion(out1, gt)
             total_loss = loss1.item()
             test_loss += total_loss
@@ -155,7 +165,7 @@ class Trainer(object):
         Acc_class = self.evaluator.Pixel_Accuracy_Class()
         mIoU = self.evaluator.Mean_Intersection_over_Union()
         FWIoU = self.evaluator.Frequency_Weighted_Intersection_over_Union()
-        self.writer.add_scalar('val/total_loss_epoch', test_loss, epoch)
+        self.writer.add_scalar('val/total_epochs', test_loss, epoch)
         self.writer.add_scalar('val/mIoU', mIoU, epoch)
         self.writer.add_scalar('val/Acc', Acc, epoch)
         self.writer.add_scalar('val/Acc_class', Acc_class, epoch)
@@ -179,8 +189,8 @@ class Trainer(object):
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch Deep interactive object selection")
-    parser.add_argument('--backbone', type=str, default='xception',
-                        choices=['resnet', 'xception', 'drn', 'mobilenet'],
+    parser.add_argument('--backbone', type=str, default='click',
+                        choices=['click', 'xception', 'drn', 'mobilenet'],
                         help='backbone name (default: resnet)')
     parser.add_argument('--out-stride', type=int, default=16,
                         help='network output stride (default: 8)')
