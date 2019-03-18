@@ -201,7 +201,7 @@ def crop_from_bbox(img, bbox, zero_pad=False):
         offsets = (-bbox[0], -bbox[1])
 
     else:
-        assert(bbox == bbox_valid)
+        # assert(bbox == bbox_valid)
         crop = np.zeros((bbox_valid[3] - bbox_valid[1] + 1, bbox_valid[2] - bbox_valid[0] + 1), dtype=img.dtype)
         offsets = (-bbox_valid[0], -bbox_valid[1])
 
@@ -243,16 +243,23 @@ def fixed_resize(sample, resolution, flagval=None):
     return sample
 
 
-def crop_from_mask(img, mask, relax=0, zero_pad=False):
+def crop_from_mask(img, mask, relax=0, zero_pad=False, jitters_bound=30):
     if mask.shape[:2] != img.shape[:2]:
         mask = cv2.resize(mask, dsize=tuple(reversed(img.shape[:2])), interpolation=cv2.INTER_NEAREST)
 
     assert(mask.shape[:2] == img.shape[:2])
-
-    bbox = get_bbox(mask, pad=relax, zero_pad=zero_pad)
+    if jitters_bound is not None:
+        bbox = get_bbox(mask, pad=0, zero_pad=False)
+    else:
+        bbox = get_bbox(mask, pad=relax, zero_pad=zero_pad)
 
     if bbox is None:
         return None
+
+    if jitters_bound:
+        jitters = np.random.randint(0, jitters_bound, 4)
+        print(jitters)
+        bbox = (bbox[0] - jitters[0], bbox[1] - jitters[1], bbox[2] + jitters[2], bbox[3] + jitters[3])
 
     crop = crop_from_bbox(img, bbox, zero_pad)
 

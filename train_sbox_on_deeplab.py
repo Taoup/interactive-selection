@@ -6,7 +6,7 @@ from tqdm import tqdm
 from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
-from modeling.correction_net.bbox_net import *
+from modeling.correction_net.sbox_on_deeplab import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -31,9 +31,11 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = BboxNet()
+        model = SBoxOnDeeplab(backbone='resnet')
+        model.load('run/resnet/deeplab-resnet.pth.tar')
 
-        train_params = [{'params': model.parameters(), 'lr': args.lr}]
+        train_params = [{'params': model.deeplab_parameters(), 'lr': args.lr},
+                        {'params': model.rest_parameters(), 'lr': args.lr}]
 
         # Define Optimizer
         optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
@@ -97,7 +99,7 @@ class Trainer(object):
                 image, target = image.cuda(), target.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            out1 = self.model(image)
+            out1, _, _ = self.model(image)
             loss1 = self.criterion(out1, target)
             loss1.backward()
             self.optimizer.step()
@@ -136,7 +138,7 @@ class Trainer(object):
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
             with torch.no_grad():
-                out1 = self.model(image)
+                out1, _, _ = self.model(image)
             loss1 = self.criterion(out1, target)
             total_loss = loss1.item()
             test_loss += total_loss
@@ -175,8 +177,8 @@ class Trainer(object):
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
-    parser.add_argument('--backbone', type=str, default='xception',
-                        choices=['resnet', 'xception', 'drn', 'mobilenet'],
+    parser.add_argument('--backbone', type=str, default='sbox_on_deeplab',
+                        choices=['sbox_on_deeplab', 'xception', 'drn', 'mobilenet'],
                         help='backbone name (default: resnet)')
     parser.add_argument('--out-stride', type=int, default=16,
                         help='network output stride (default: 8)')

@@ -26,14 +26,6 @@ class DeepLab(nn.Module):
         if freeze_bn:
             self.freeze_bn()
 
-    def train_mode(self):
-        self.backbone.eval()
-        self.aspp.eval()
-        for p in self.backbone.parameters():
-            p.requires_grad = False
-        for p in self.aspp.parameters():
-            p.requires_grad = False
-
     def forward(self, input):
         x, low_level_feat = self.backbone(input)
         pfm = self.aspp(x)

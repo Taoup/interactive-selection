@@ -270,30 +270,24 @@ if __name__ == '__main__':
     import torch
     from torchvision import transforms
 
-    transform = transforms.Compose([
-        tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
+    transform = transforms.Compose([tr.CropFromMask(crop_elems=('image', 'gt')),
                                     tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
                                     tr.Normalize(elems='crop_image'),
-                                    tr.SimUserInput(no_exp=True),
                                     # tr.ToImage(norm_elem=('pos_map', 'neg_map')),
-                                    tr.ConcatInputs(elems=('crop_image', 'neg_map', 'pos_map')),
                                     ])
 
     dataset = VOCSegmentation(split=['train', 'val'], transform=transform, retname=True)
     # dataset = VOCSegmentation(split=['train', 'val'], retname=True)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
 
-    for i, sample in enumerate(dataset):
-        print(sample.keys())
+    for i, sample in enumerate(dataloader):
         while 1:
-            cv2.imshow('image', np.array(sample['crop_image']))
-            cv2.imshow('crop_gt', sample['crop_gt'])
-            cv2.imshow('pos map', sample['pos_map'])
-            cv2.imshow('neg map', sample['neg_map'])
+            cv2.imshow('image', sample['crop_image'][0].numpy())
+            cv2.imshow('crop_gt', sample['crop_gt'][0].numpy())
             if cv2.waitKey(1) & 0xff == ord('q'):
                 break
 
-        if i == 1:
+        if i == 4:
             break
 
     plt.show(block=True)
