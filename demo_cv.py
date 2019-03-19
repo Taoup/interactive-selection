@@ -6,6 +6,7 @@ from PIL import Image
 import numpy as np
 
 from modeling.correction_net.sbox_net import *
+from modeling.correction_net.sbox_on_deeplab import *
 from modeling.correction_net.fusion_net import *
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
@@ -17,8 +18,8 @@ gpu_id = 0
 device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
 # device = torch.device('cpu')
 
-wrapper_net = FusionNet(SBoxNet(), ClickNet())
-wrapper_net.load_state_dict(torch.load('run/click/click_miou_8254.pth.tar')['state_dict'])
+wrapper_net = FusionNet(SBoxOnDeeplab(), ClickNet())
+# wrapper_net.load_state_dict(torch.load('run/click/click_miou_8254.pth.tar')['state_dict'])
 wrapper_net.sbox_net.load('run/sbox/sbox_miou_8102.pth.tar')
 wrapper_net.eval()
 wrapper_net = wrapper_net.to(device)

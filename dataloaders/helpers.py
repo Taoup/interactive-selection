@@ -258,7 +258,6 @@ def crop_from_mask(img, mask, relax=0, zero_pad=False, jitters_bound=30):
 
     if jitters_bound:
         jitters = np.random.randint(0, jitters_bound, 4)
-        print(jitters)
         bbox = (bbox[0] - jitters[0], bbox[1] - jitters[1], bbox[2] + jitters[2], bbox[3] + jitters[3])
 
     crop = crop_from_bbox(img, bbox, zero_pad)

@@ -76,7 +76,6 @@ if __name__ == '__main__':
 
     DEBUG = True
     sbox = SBoxNet()
-    sbox.load('../../run/sbox_miou_7686.pth.tar')
     fusion = FusionNet(sbox, ClickNet())
     transform = transforms.Compose([
         tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),

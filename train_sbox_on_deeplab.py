@@ -97,7 +97,7 @@ class Trainer(object):
             image, target = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
-            self.scheduler(self.optimizer, i, epoch, self.best_pred)
+            self.scheduler(self.optimizer, i, epoch, self.best_pred, power=1.1)
             self.optimizer.zero_grad()
             out1, _, _ = self.model(image)
             loss1 = self.criterion(out1, target)
@@ -172,7 +172,7 @@ class Trainer(object):
                 'state_dict': self.model.module.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
-            }, is_best)
+            }, is_best, prefix='SBoxOnDeeplab')
 
 
 def main():
@@ -216,7 +216,7 @@ def main():
     # optimizer params
     parser.add_argument('--lr', type=float, default=None, metavar='LR',
                         help='learning rate (default: auto)')
-    parser.add_argument('--lr-scheduler', type=str, default='cos',
+    parser.add_argument('--lr-scheduler', type=str, default='poly',
                         choices=['poly', 'step', 'cos'],
                         help='lr scheduler mode: (default: poly)')
     parser.add_argument('--momentum', type=float, default=0.9,

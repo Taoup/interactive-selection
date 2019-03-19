@@ -184,7 +184,7 @@ class Trainer(object):
                 'state_dict': self.model.module.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
-            }, is_best)
+            }, is_best, prefix='click')
 
 
 def main():
