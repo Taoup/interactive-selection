@@ -7,22 +7,22 @@ from torch.autograd import Variable
 class ClickNet(nn.Module):
     def __init__(self):
         super(ClickNet, self).__init__()
-        self.downsample = nn.Sequential(
-            nn.Conv2d(2, 32, 3, 2, 1, bias=False),
+        self.reduce_c_low = nn.Sequential(
+            nn.Conv2d(256, 32, 1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU()
+        )
+        self.reduce_c_aspp = nn.Sequential(
+            nn.Conv2d(256, 64, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU()
+        )
+        self.refine = nn.Sequential(
+            nn.Conv2d(98, 32, 3, 1, 1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Conv2d(32, 64, 3, 2, 1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Dropout(0.3)
-        )
-        self.refine = nn.Sequential(
-            nn.Conv2d(192, 64, 3, 1, 1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Conv2d(64, 32, 3, 1, 1, bias=False),
+            nn.Conv2d(32, 32, 3, 1, 1, bias=False),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -33,10 +33,12 @@ class ClickNet(nn.Module):
             nn.Conv2d(8, 2, 3, 1, 1),
         )
 
-    def forward(self, pred, fpm):
-        x = self.downsample(pred)
-        fpm = F.interpolate(fpm, x.size()[2:], mode='bilinear', align_corners=True)
-        x1 = torch.cat([fpm, x], dim=1)
+    def forward(self, pred, aspp_out, low_level_feat):
+        down_pred = F.interpolate(pred, low_level_feat.size()[2:], mode='bilinear', align_corners=True)
+        aspp_out = F.interpolate(aspp_out, low_level_feat.size()[2:], mode='bilinear', align_corners=True)
+        aspp_out = self.reduce_c_aspp(aspp_out)
+        low_level_feat = self.reduce_c_low(low_level_feat)
+        x1 = torch.cat([down_pred, aspp_out, low_level_feat], dim=1)
         result1 = self.refine(x1)
         result1 = F.interpolate(result1, pred.size()[2:], mode='bilinear', align_corners=True)
         return result1

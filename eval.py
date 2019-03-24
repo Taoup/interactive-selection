@@ -32,7 +32,6 @@ class Trainer(object):
 
         # Define network
         model = SBoxOnDeeplab(backbone='resnet')
-        model.load('run/resnet/deeplab-resnet.pth.tar')
 
         train_params = [{'params': model.deeplab_parameters(), 'lr': args.lr},
                         {'params': model.rest_parameters(), 'lr': args.lr}]
@@ -289,14 +288,7 @@ def main():
     print(args)
     torch.manual_seed(args.seed)
     trainer = Trainer(args)
-    print('Starting Epoch:', trainer.args.start_epoch)
-    print('Total Epoches:', trainer.args.epochs)
-    for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
-        trainer.training(epoch)
-        if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
-            trainer.validation(epoch)
-
-    trainer.writer.close()
+    trainer.validation(0)
 
 
 if __name__ == "__main__":

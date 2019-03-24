@@ -5,20 +5,19 @@ from torchvision import transforms
 from dataloaders import custom_transforms as tr
 
 def make_data_loader(args, **kwargs):
-
+    crop_size = args.crop_size
     if args.dataset == 'pascal':
         composed_transforms_tr = transforms.Compose([
             tr.RandomHorizontalFlip(),
             tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
+            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()
         ])
         composed_transforms_val = transforms.Compose([
-            tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
-            tr.SimUserInput(no_exp=True),
+            tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True, jitters_bound=None),
+            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()])
         train_set = pascal.VOCSegmentation(split='train', transform=composed_transforms_tr)
@@ -27,7 +26,7 @@ def make_data_loader(args, **kwargs):
             sbd_train = sbd.SBDSegmentation(args, split=['train', 'val'])
             train_set = combine_dbs.CombineDBs([train_set, sbd_train], excluded=[val_set])
 
-        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, **kwargs)
+        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, drop_last=True, **kwargs)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, **kwargs)
         test_loader = None
         NUM_CLASSES = 2

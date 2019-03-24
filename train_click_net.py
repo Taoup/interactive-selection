@@ -8,6 +8,7 @@ from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.correction_net.fusion_net import *
 from modeling.correction_net.sbox_net import *
+from modeling.correction_net.sbox_on_deeplab import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -34,8 +35,8 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        sbox = SBoxNet()
-        sbox.load('run/pascal/sbox_miou_8102.pth.tar')
+        sbox = SBoxOnDeeplab()
+        sbox.load_state_dict(torch.load('run/pascal/sbox/sbox_miou_8615.pth.tar')['state_dict'])
         click = ClickNet()
         model = FusionNet(sbox=sbox, click=click)
         model.sbox_net.eval()
@@ -106,8 +107,8 @@ class Trainer(object):
                 image, gt = image.cuda(), gt.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            out1, click_pred = self.model(image, res=False, crop_gt=gt)
-            loss1 = self.criterion(out1, gt)
+            sbox_pred, click_pred = self.model(image, crop_gt=gt)
+            loss1 = self.criterion(click_pred, gt)
             loss1.backward()
             self.optimizer.step()
             total_loss = loss1.item()
@@ -122,7 +123,7 @@ class Trainer(object):
                                                                dataset=self.args.dataset), 3, normalize=False,
                                        range=(0, 255))
                 self.summary.visualize_image(self.writer, self.args.dataset, image, sample['crop_gt'],
-                                             out1,
+                                             sbox_pred,
                                              global_step)
                 self.writer.add_image('click-net-corrections', grid_image, global_step)
 
@@ -150,11 +151,11 @@ class Trainer(object):
             if self.args.cuda:
                 image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
-                out1, click_pred = self.model(image, crop_gt=gt)
-            loss1 = self.criterion(out1, gt)
+                sbox_pred, click_pred = self.model(image, crop_gt=gt)
+            loss1 = self.criterion(click_pred, gt)
             total_loss = loss1.item()
             test_loss += total_loss
-            pred = out1.data.cpu().numpy()
+            pred = click_pred.data.cpu().numpy()
             target = gt.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator
@@ -228,7 +229,7 @@ def main():
     # optimizer params
     parser.add_argument('--lr', type=float, default=None, metavar='LR',
                         help='learning rate (default: auto)')
-    parser.add_argument('--lr-scheduler', type=str, default='cos',
+    parser.add_argument('--lr-scheduler', type=str, default='poly',
                         choices=['poly', 'step', 'cos'],
                         help='lr scheduler mode: (default: poly)')
     parser.add_argument('--momentum', type=float, default=0.9,

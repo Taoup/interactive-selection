@@ -270,11 +270,13 @@ if __name__ == '__main__':
     import torch
     from torchvision import transforms
 
-    transform = transforms.Compose([tr.CropFromMask(crop_elems=('image', 'gt')),
-                                    tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
-                                    tr.Normalize(elems='crop_image'),
-                                    # tr.ToImage(norm_elem=('pos_map', 'neg_map')),
-                                    ])
+    transform = transforms.Compose([
+        tr.CropFromMask(crop_elems=('image', 'gt'), relax=100, zero_pad=True, jitters_bound=(10, 30)),
+        # tr.CropFromMask(crop_elems=('image', 'gt'), relax=5, zero_pad=True, jitters_bound=None),
+        tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
+        tr.Normalize(elems='crop_image'),
+        # tr.ToImage(norm_elem=('pos_map', 'neg_map')),
+    ])
 
     dataset = VOCSegmentation(split=['train', 'val'], transform=transform, retname=True)
     # dataset = VOCSegmentation(split=['train', 'val'], retname=True)

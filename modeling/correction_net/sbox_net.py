@@ -111,7 +111,7 @@ class SBoxNet(nn.Module):
 
 
 if __name__ == '__main__':
-    x = Variable(torch.randn(5, 3, 256, 256))
+    x = Variable(torch.randn(5, 3, 512, 512))
     fms = SBoxNet()
     result, fpm = fms(x)
     print(result.size())

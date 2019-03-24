@@ -243,12 +243,12 @@ def fixed_resize(sample, resolution, flagval=None):
     return sample
 
 
-def crop_from_mask(img, mask, relax=0, zero_pad=False, jitters_bound=30):
+def crop_from_mask(img, mask, relax=0, zero_pad=False, jitters=None):
     if mask.shape[:2] != img.shape[:2]:
         mask = cv2.resize(mask, dsize=tuple(reversed(img.shape[:2])), interpolation=cv2.INTER_NEAREST)
 
     assert(mask.shape[:2] == img.shape[:2])
-    if jitters_bound is not None:
+    if jitters is not None:
         bbox = get_bbox(mask, pad=0, zero_pad=False)
     else:
         bbox = get_bbox(mask, pad=relax, zero_pad=zero_pad)
@@ -256,8 +256,7 @@ def crop_from_mask(img, mask, relax=0, zero_pad=False, jitters_bound=30):
     if bbox is None:
         return None
 
-    if jitters_bound:
-        jitters = np.random.randint(0, jitters_bound, 4)
+    if jitters is not None:
         bbox = (bbox[0] - jitters[0], bbox[1] - jitters[1], bbox[2] + jitters[2], bbox[3] + jitters[3])
 
     crop = crop_from_bbox(img, bbox, zero_pad)

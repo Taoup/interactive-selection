@@ -11,6 +11,7 @@ from modeling.correction_net.fusion_net import *
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
 from torchvision import transforms
+import torch.nn.functional as F
 
 pad = 50
 thres = 0.8
@@ -20,7 +21,7 @@ device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu
 
 wrapper_net = FusionNet(SBoxOnDeeplab(), ClickNet())
 # wrapper_net.load_state_dict(torch.load('run/click/click_miou_8254.pth.tar')['state_dict'])
-wrapper_net.sbox_net.load('run/sbox/sbox_miou_8102.pth.tar')
+wrapper_net.sbox_net.load_state_dict(torch.load('run/sbox/sbox_miou_8735.pth.tar', map_location=device)['state_dict'])
 wrapper_net.eval()
 wrapper_net = wrapper_net.to(device)
 wrapper_net.prev_pred = None
@@ -67,7 +68,7 @@ def mouse_cb(event, x, y, flag, para):
             neg_points.append((y - rect[0][1],x - rect[0][0]))
 
 
-image = np.array(Image.open('ims/bear.jpg'))
+image = np.array(Image.open('ims/dog-cat.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
@@ -100,14 +101,14 @@ with torch.no_grad():
 
             crop_image = image[rect[0][1]:rect[1][1], rect[0][0]:rect[1][0], :]
             if wrapper_net.prev_pred is None:
-                resize_image = helpers.fixed_resize(crop_image, (256, 256)).astype(np.float32)
+                resize_image = helpers.fixed_resize(crop_image, (512, 512)).astype(np.float32)
                 sample['crop_image'] = resize_image
                 sample = test_transformer(sample)
                 inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
 
             # Run a forward pass
                 inputs = inputs.to(device)
-                pred, fused_feat_maps = wrapper_net.sbox_net(inputs)
+                pred, fused_feat_maps, low_feat = wrapper_net.sbox_net(inputs)
                 wrapper_net.prev_pred = pred
                 wrapper_net.fused_feat_maps = fused_feat_maps
             else:
@@ -119,11 +120,12 @@ with torch.no_grad():
                 fused = wrapper_net.prev_pred + gdm
                 pred = wrapper_net.click_net(fused, wrapper_net.fused_feat_maps)
                 # wrapper_net.prev_pred = pred
-            pred = pred.data.cpu().numpy()
-            pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
+            pred = pred.data.cpu()
+            # pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
+            pred = F.softmax(pred)[0][0].numpy()
             pred = cv2.resize(pred, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
-            pred = pred * 255
+            # pred = pred * 255
             cv2.imshow('mask', pred)
             show_image = crop_image.copy()
-            show_image[..., 0] = cv2.add(show_image[..., 0], pred)
+            # show_image[..., 0] = cv2.add(show_image[..., 0], pred)
             cv2.imshow('result', cv2.cvtColor(show_image, cv2.COLOR_RGB2BGR))

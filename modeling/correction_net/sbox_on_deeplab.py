@@ -87,7 +87,7 @@ class SBoxOnDeeplab(nn.Module):
 
 
 if __name__ == '__main__':
-    x = torch.randn(1, 3, 256, 256)
+    x = torch.randn(1, 3, 512, 512)
     fms = SBoxOnDeeplab()
     fms.eval()
     result = fms(x)

@@ -25,6 +25,7 @@ class Trainer(object):
         # Define Tensorboard Summary
         self.summary = TensorboardSummary(self.saver.experiment_dir)
         self.writer = self.summary.create_summary()
+        self.device = torch.device('cuda:1')
 
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
@@ -63,9 +64,7 @@ class Trainer(object):
 
         # Using cuda
         if args.cuda:
-            self.model = torch.nn.DataParallel(self.model, device_ids=self.args.gpu_ids)
-            patch_replication_callback(self.model)
-            self.model = self.model.cuda()
+            self.model = self.model.to(self.device)
 
         # Resuming checkpoint
         self.best_pred = 0.0
@@ -75,7 +74,7 @@ class Trainer(object):
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             if args.cuda:
-                self.model.module.load_state_dict(checkpoint['state_dict'])
+                self.model.load_state_dict(checkpoint['state_dict'])
             else:
                 self.model.load_state_dict(checkpoint['state_dict'])
             if not args.ft:
@@ -96,7 +95,7 @@ class Trainer(object):
         for i, sample in enumerate(tbar):
             image, target = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                image, target = image.to(self.device), target.to(self.device)
             self.scheduler(self.optimizer, i, epoch, self.best_pred, power=1.1)
             self.optimizer.zero_grad()
             out1, _, _ = self.model(image)
@@ -123,7 +122,7 @@ class Trainer(object):
             is_best = False
             self.saver.save_checkpoint({
                 'epoch': epoch + 1,
-                'state_dict': self.model.module.state_dict(),
+                'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
             }, is_best, prefix='SBoxOnDeeplab')
@@ -136,7 +135,7 @@ class Trainer(object):
         for i, sample in enumerate(tbar):
             image, target = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                image, target = image.to(self.device), target.to(self.device)
             with torch.no_grad():
                 out1, _, _ = self.model(image)
             loss1 = self.criterion(out1, target)
@@ -169,7 +168,7 @@ class Trainer(object):
             self.best_pred = new_pred
             self.saver.save_checkpoint({
                 'epoch': epoch + 1,
-                'state_dict': self.model.module.state_dict(),
+                'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
             }, is_best, prefix='SBoxOnDeeplab')
