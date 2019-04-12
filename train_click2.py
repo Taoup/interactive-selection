@@ -9,6 +9,7 @@ from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.correction_net.fusion_net import *
 from modeling.deeplab1 import DeepLabX
 from modeling.correction_net.sbox_on_deeplab import *
+from modeling.correction_net.click4 import ClickNet
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -33,12 +34,13 @@ class Trainer(object):
 
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
-        extract_hard_example(args, batch_size=32)
+        # extract_hard_example(args, batch_size=32)
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
         sbox = DeepLabX(pretrain=False)
-        sbox.load_state_dict(torch.load('run/sbox/sbox_miou_8527.pth.tar')['state_dict'])
+        sbox.load_state_dict(
+            torch.load('run/sbox/sbox_8697_256.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
         click = ClickNet()
         model = FusionNet(sbox=sbox, click=click)
         model.sbox_net.eval()

@@ -5,11 +5,12 @@ from modeling.sync_batchnorm.batchnorm import SynchronizedBatchNorm2d
 from modeling.aspp import build_aspp
 from modeling.decoder import build_decoder
 from modeling.backbone import build_backbone
+from collections import OrderedDict
 
 
 class DeepLabX(nn.Module):
     def __init__(self, backbone='resnet', output_stride=16, num_classes=21,
-                 sync_bn=True, freeze_bn=False):
+                 sync_bn=True, freeze_bn=False, pretrain=True):
         super(DeepLabX, self).__init__()
         self.num_classes = num_classes
         if backbone == 'drn':
@@ -26,6 +27,33 @@ class DeepLabX(nn.Module):
 
         if freeze_bn:
             self.freeze_bn()
+
+        if pretrain:
+            self._load_pretrain()
+
+        # change the last inference layer for binary segmentation mask
+        last_conv = list(self.decoder.last_conv.children())
+        self.decoder.last_conv = nn.Sequential(*last_conv[:-1])
+        self.decoder.last_conv.add_module('8', nn.Conv2d(256, 2, 1, 1))
+
+    def _load_pretrain(self):
+        path = 'run/resnet/deeplab-resnet.pth.tar'
+        print("load pretrained Deeplab from: {} ".format(path))
+        # state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+        checkpoint = torch.load(path)
+
+        # Remove the prefix .module from the model when it is trained using DataParallel
+        if 'module.' in list(checkpoint['state_dict'].keys())[0]:
+            print("test")
+            new_state_dict = OrderedDict()
+            for k, v in checkpoint['state_dict']:
+                name = k[7:]  # remove `module.` from multi-gpu training
+                new_state_dict[name] = v
+        else:
+            new_state_dict = checkpoint['state_dict']
+        model_dict = self.state_dict()
+        new_state_dict = {k: v for k, v in new_state_dict.items() if k in model_dict}
+        self.load_state_dict(new_state_dict)
 
     def forward(self, input):
         x, low_level_feat = self.backbone(input)
@@ -64,9 +92,9 @@ class DeepLabX(nn.Module):
 
 
 if __name__ == "__main__":
-    model = DeepLabX(backbone='resnet', output_stride=16)
+    model = DeepLabX(backbone='resnet', output_stride=16, pretrain=False)
     model.eval()
-    input = torch.rand(1, 3, 513, 513)
+    input = torch.rand(1, 3, 256, 256)
     output = model(input)
     for x in output:
         print(x.size())

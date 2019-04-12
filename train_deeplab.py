@@ -33,26 +33,6 @@ class Trainer(object):
 
         # Define network
         model = DeepLabX(backbone='resnet', output_stride=16, sync_bn=False)
-        path = 'run/resnet/deeplab-resnet.pth.tar'
-        print("load pretrained Deeplab from: {} ".format(path))
-        # state_dict_checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-        checkpoint = torch.load(path)
-
-        # Remove the prefix .module from the model when it is trained using DataParallel
-        if 'module.' in list(checkpoint['state_dict'].keys())[0]:
-            print("test")
-            new_state_dict = OrderedDict()
-            for k, v in checkpoint['state_dict']:
-                name = k[7:]  # remove `module.` from multi-gpu training
-                new_state_dict[name] = v
-        else:
-            new_state_dict = checkpoint['state_dict']
-        model_dict = model.state_dict()
-        new_state_dict = {k: v for k, v in new_state_dict.items() if k in model_dict}
-        model.load_state_dict(new_state_dict)
-        last_conv = list(model.decoder.last_conv.children())
-        model.decoder.last_conv = nn.Sequential(*last_conv[:-1])
-        model.decoder.last_conv.add_module('8', nn.Conv2d(256, 2, 1, 1))
 
         train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
                         {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]

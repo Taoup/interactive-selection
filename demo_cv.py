@@ -8,6 +8,8 @@ import numpy as np
 from modeling.correction_net.sbox_net import *
 from modeling.correction_net.sbox_on_deeplab import *
 from modeling.correction_net.fusion_net import *
+from modeling.correction_net.click2 import ClickNet
+from modeling.deeplab1 import DeepLabX
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
 from torchvision import transforms
@@ -19,9 +21,9 @@ gpu_id = 0
 device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu")
 # device = torch.device('cpu')
 
-wrapper_net = FusionNet(SBoxOnDeeplab(), ClickNet())
-# wrapper_net.load_state_dict(torch.load('run/click/click_miou_8254.pth.tar')['state_dict'])
-wrapper_net.sbox_net.load_state_dict(torch.load('run/sbox/sbox_miou_8735.pth.tar', map_location=device)['state_dict'])
+wrapper_net = FusionNet(DeepLabX(pretrain=False), ClickNet())
+wrapper_net.load_state_dict(torch.load('run/click/fusion_8873.pth.tar')['state_dict'])
+# wrapper_net.sbox_net.load_state_dict(torch.load('run/sbox/sbox_miou_8735.pth.tar', map_location=device)['state_dict'])
 wrapper_net.eval()
 wrapper_net = wrapper_net.to(device)
 wrapper_net.prev_pred = None
@@ -110,6 +112,7 @@ with torch.no_grad():
                 inputs = inputs.to(device)
                 pred, fused_feat_maps, low_feat = wrapper_net.sbox_net(inputs)
                 wrapper_net.prev_pred = pred
+                wrapper_net.low_feat = low_feat
                 wrapper_net.fused_feat_maps = fused_feat_maps
             else:
                 pos_map = gaussian_clicks(pos_points, crop_image.shape[:2], 60)
@@ -117,15 +120,18 @@ with torch.no_grad():
                 neg_map = gaussian_clicks(neg_points, crop_image.shape[:2], 60)
                 neg_map = F.interpolate(neg_map, (256, 256), mode='bilinear')
                 gdm = torch.cat([neg_map, pos_map], dim=1).to(device)
-                fused = wrapper_net.prev_pred + gdm
-                pred = wrapper_net.click_net(fused, wrapper_net.fused_feat_maps)
+                pred = wrapper_net.click_net(gdm, wrapper_net.fused_feat_maps, wrapper_net.low_feat)
+                sbox_pred_upsampled = F.interpolate(wrapper_net.prev_pred, size=pred.size()[2:], align_corners=True,
+                                                    mode='bilinear')
+                click_pred = sbox_pred_upsampled + pred
+                pred = F.interpolate(click_pred, size=(512, 512), align_corners=True, mode='bilinear')
                 # wrapper_net.prev_pred = pred
             pred = pred.data.cpu()
-            # pred = np.argmax(pred, axis=1)[0].astype(np.uint8)
-            pred = F.softmax(pred)[0][0].numpy()
-            pred = cv2.resize(pred, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
-            # pred = pred * 255
-            cv2.imshow('mask', pred)
+            pred_score = F.softmax(pred)[0][0].numpy()
+            pred_abs = np.argmax(pred.numpy(), axis=1)[0].astype(np.uint8)
+            pred_img = cv2.resize(pred_score, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+            pred_abs = cv2.resize(pred_abs, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+            cv2.imshow('mask', pred_img)
             show_image = crop_image.copy()
-            # show_image[..., 0] = cv2.add(show_image[..., 0], pred)
+            show_image[..., 0] = cv2.add(show_image[..., 0], pred_abs * 255)
             cv2.imshow('result', cv2.cvtColor(show_image, cv2.COLOR_RGB2BGR))

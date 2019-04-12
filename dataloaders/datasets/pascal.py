@@ -8,6 +8,7 @@ import numpy as np
 import pickle
 
 import torch.utils.data as data
+from modeling.deeplab1 import DeepLabX
 from PIL import Image
 from six.moves import urllib
 import json
@@ -16,7 +17,6 @@ import dataloaders.custom_transforms as tr
 
 
 class VOCSegmentation(data.Dataset):
-
     URL = "http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar"
     FILE = "VOCtrainval_11-May-2012.tar"
     MD5 = '6cd6e144f989b92b3379bac3b3de84fd'
@@ -37,7 +37,8 @@ class VOCSegmentation(data.Dataset):
                  area_thres=500,
                  retname=True,
                  suppress_void_pixels=True,
-                 default=False):
+                 default=False,
+                 which_part='whole'):
 
         self.root = root
         _voc_root = os.path.join(self.root, self.BASE_DIR)
@@ -101,7 +102,7 @@ class VOCSegmentation(data.Dataset):
         if (not self._check_preprocess()) or preprocess:
             print('Preprocessing of PASCAL VOC dataset, this will take long, but it will be done only once.')
             self._preprocess()
-            
+
         # Build the list of objects
         self.obj_list = []
         num_images = 0
@@ -114,16 +115,39 @@ class VOCSegmentation(data.Dataset):
             if flag:
                 num_images += 1
 
+        self.sbox_train = self.obj_list[::2]
+        self.click_train = self.obj_list[1::2]
+        if split == 'train':
+            if which_part == 'sbox':
+                self.target_list = self.sbox_train
+            elif which_part == 'click':
+                self.target_list = self.click_train
+            elif which_part == 'whole':
+                self.target_list = self.obj_list
+            else:
+                raise NotImplementedError
+        else:
+            self.target_list = self.obj_list
         # Display stats
-        print('Number of images: {:d}\nNumber of objects: {:d}'.format(num_images, len(self.obj_list)))
+        print('Number of images: {:d}\nNumber of objects: {:d}'.format(num_images, len(self.target_list)))
+
+    def reset_target_list(self, args):
+        path = os.path.join(self.root, self.BASE_DIR, 'ImageSets', 'Segmentation',
+                            '-'.join([args.sbox, 'mIoU_thres', str(args.low_thres), str(args.high_thres), 'on',
+                                      args.which, 'sets']) + '.txt')
+        self.target_list = json.load(open(path, 'r'))
+        print('After filtering out object with miou below {} and above {}, number of objects:{}'.format(args.low_thres,
+                                                                                                        args.high_thres,
+                                                                                                        len(
+                                                                                                            self.target_list)))
 
     def __getitem__(self, index):
         _img, _target, _void_pixels, _, _, _ = self._make_img_gt_point_pair(index)
         sample = {'image': _img, 'gt': _target, 'void_pixels': _void_pixels}
 
         if self.retname:
-            _im_ii = self.obj_list[index][0]
-            _obj_ii = self.obj_list[index][1]
+            _im_ii = self.target_list[index][0]
+            _obj_ii = self.target_list[index][1]
             sample['meta'] = {'image': str(self.im_ids[_im_ii]),
                               'object': str(_obj_ii),
                               'category': self.obj_dict[self.im_ids[_im_ii]][_obj_ii],
@@ -135,7 +159,7 @@ class VOCSegmentation(data.Dataset):
         return sample
 
     def __len__(self):
-        return len(self.obj_list)
+        return len(self.target_list)
 
     def _check_integrity(self):
         _fpath = os.path.join(self.root, self.FILE)
@@ -228,8 +252,8 @@ class VOCSegmentation(data.Dataset):
         print('Done!')
 
     def _make_img_gt_point_pair(self, index):
-        _im_ii = self.obj_list[index][0]
-        _obj_ii = self.obj_list[index][1]
+        _im_ii = self.target_list[index][0]
+        _obj_ii = self.target_list[index][1]
 
         # Read Image
         _img = np.array(Image.open(self.images[_im_ii]).convert('RGB')).astype(np.float32)
@@ -249,11 +273,11 @@ class VOCSegmentation(data.Dataset):
             _target = (_tmp == (_obj_ii + 1)).astype(np.float32)
             _background = np.logical_and(_tmp == 0, ~_void_pixels)
             obj_cat = self.obj_dict[self.im_ids[_im_ii]][_obj_ii]
-            for ii in range(1, np.max(_tmp).astype(np.int)+1):
-                ii_cat = self.obj_dict[self.im_ids[_im_ii]][ii-1]
-                if obj_cat == ii_cat and ii != _obj_ii+1:
+            for ii in range(1, np.max(_tmp).astype(np.int) + 1):
+                ii_cat = self.obj_dict[self.im_ids[_im_ii]][ii - 1]
+                if obj_cat == ii_cat and ii != _obj_ii + 1:
                     _other_same_class = np.logical_or(_other_same_class, _tmp == ii)
-                elif ii != _obj_ii+1:
+                elif ii != _obj_ii + 1:
                     _other_classes = np.logical_or(_other_classes, _tmp == ii)
 
         return _img, _target, _void_pixels.astype(np.float32), \
@@ -272,15 +296,17 @@ if __name__ == '__main__':
 
     transform = transforms.Compose([
         tr.CropFromMask(crop_elems=('image', 'gt'), relax=100, zero_pad=True, jitters_bound=(10, 30)),
+        tr.RandomHorizontalFlip(),
+        tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
         # tr.CropFromMask(crop_elems=('image', 'gt'), relax=5, zero_pad=True, jitters_bound=None),
         tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
         tr.Normalize(elems='crop_image'),
         # tr.ToImage(norm_elem=('pos_map', 'neg_map')),
     ])
 
-    dataset = VOCSegmentation(split=['train', 'val'], transform=transform, retname=True)
+    dataset = VOCSegmentation(split=['train'], transform=transform, retname=True)
     # dataset = VOCSegmentation(split=['train', 'val'], retname=True)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     for i, sample in enumerate(dataloader):
         while 1:

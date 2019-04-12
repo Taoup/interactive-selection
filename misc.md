@@ -1,20 +1,9 @@
-
-
-
-
-训练记录：<br>
-click-net 没有头尾shortcut连接效果更好：0.8141 VS 0.8254<br>
-PFM方式的网络，在训练800epoch后，mIoU达到0.8213, 70左右epoch时大概为0.75样子<br>
-在已经训练的分割网络上进行sbox的训练，第一个epoch的mIoU就可以达到0.70样子。<br>
-sbox_on_deeplab:训练deeplab的所有参数VS只训练decoder:***对所有参数进行训练，训练5个epoch后，val
-集mIOU达到0.8454。结论：训练所有参数。*** 
-sbox_on_deeplab后续训练出现train loss持续上升的状态，可能原因：数值稳定性问题，某个
-batch的gradient炸了。可以说试试gradient norm clipping.
-![](abnormal_training.PNG)
-
-
+mIoU达到89.01的超级参数：
+lr=0.1, batch-size=8
 
 # TODO:
+重新设计click train data获取方式，独立出一个文件供pascal调用<br>
+对当前代码进行重构。<br>
 ~~resume 训练后，learning rate 比结束训练前升高很多，导致resume后很长一段时间都没有提升。~~<br>
 ------------使用训练参数--ft即可<br> 
 ~~sbox使用已训练的分割网络进行训练，使用较好的学习率调整策略. be patient.~~<br>

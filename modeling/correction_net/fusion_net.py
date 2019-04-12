@@ -1,5 +1,4 @@
-from modeling.correction_net.click_net import *
-from modeling.correction_net.sbox_net import *
+from modeling.correction_net.click2 import *
 from modeling.correction_net.sbox_on_deeplab import *
 import torch.nn as nn
 import numpy as np
@@ -14,18 +13,24 @@ class FusionNet(nn.Module):
         self.sigma = sigma
 
     def forward(self, image, **input):
-        sbox_pred, aspp_out, low_level_feat = self.sbox_net(image)
+        dimage = F.interpolate(image, size=(256, 256), align_corners=True, mode='bilinear')
+        sbox_pred, aspp_out, low_level_feat = self.sbox_net(dimage)
         pos_map, neg_map = self._simulate_user_interaction(sbox_pred, input['crop_gt'])
         if image.is_cuda:
             pos_map, neg_map = pos_map.cuda(), neg_map.cuda()
-        simulated_clicks = torch.cat([neg_map, pos_map], dim=1)
-        together = simulated_clicks + sbox_pred
-        click_pred = self.click_net(together, aspp_out, low_level_feat)
+        gaussian_center_map = torch.cat([neg_map, pos_map], dim=1)
+        # together = simulated_clicks + sbox_pred
+        # click_pred = self.click_net(together, aspp_out, low_level_feat)
+        click_pred = self.click_net(gaussian_center_map, aspp_out, low_level_feat)
+        sbox_pred_upsampled = F.interpolate(sbox_pred, size=click_pred.size()[2:], align_corners=True, mode='bilinear')
+        click_pred = sbox_pred_upsampled + click_pred
+        click_pred = F.interpolate(click_pred, size=image.size()[2:], align_corners=True, mode='bilinear')
         return sbox_pred, click_pred
 
     def _simulate_user_interaction(self, pred, gt):
         _pred = torch.argmax(pred, dim=1).int()
-        _gt = gt.int()
+        _gt = F.interpolate(torch.unsqueeze(gt, dim=0), size=pred.size()[2:], align_corners=True,
+                            mode='bilinear').squeeze().int()
         self.FPs = (_pred > _gt)
         self.FNs = (_pred < _gt)
         pos_map = self.__gen_EDM(self.FNs)
@@ -48,7 +53,7 @@ class FusionNet(nn.Module):
                         break
                     cur_label = sorted_labels[-(i + 1)] + 1  # Caution for BUG: -(i+1) is crucial
                     if (label == cur_label).sum() > 100:
-                        print(label.shape, cur_label.shape)
+                        # print(label.shape, cur_label.shape)
                         idx_xs, idx_ys = np.where(label == cur_label)
                         _tmp = np.random.randint(0, len(idx_xs))  # TODO: find the center of ill-segmented region
                         xs = np.arange(0, shape[1], 1, np.float)
