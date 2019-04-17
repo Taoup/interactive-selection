@@ -100,6 +100,7 @@ class Trainer(object):
             self.scheduler(self.optimizer, i, epoch, self.best_pred, power=1.1)
             self.optimizer.zero_grad()
             out1, _, _ = self.model(image)
+            out1 = F.interpolate(out1, size=target.size()[-2:], mode='bilinear', align_corners=True)
             loss1 = self.criterion(out1, target)
             loss1.backward()
             self.optimizer.step()
@@ -139,6 +140,7 @@ class Trainer(object):
                 image, target = image.cuda(), target.cuda()
             with torch.no_grad():
                 out1, _, _ = self.model(image)
+            out1 = F.interpolate(out1, size=target.size()[-2:], mode='bilinear', align_corners=True)
             loss1 = self.criterion(out1, target)
             total_loss = loss1.item()
             test_loss += total_loss
@@ -193,6 +195,8 @@ def main():
                         help='base image size')
     parser.add_argument('--crop-size', type=int, default=512,
                         help='crop image size')
+    parser.add_argument('--gt-size', type=int, default=512,
+                        help='crop ground truth size')
     parser.add_argument('--sync-bn', type=bool, default=False,
                         help='whether to use sync bn (default: False)')
     parser.add_argument('--freeze-bn', type=bool, default=False,

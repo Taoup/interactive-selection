@@ -56,12 +56,12 @@ class DeepLabX(nn.Module):
         self.load_state_dict(new_state_dict)
 
     def forward(self, input):
-        x, low_level_feat = self.backbone(input)
-        pfm = self.aspp(x)
-        x = self.decoder(pfm, low_level_feat)
-        x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
+        x, low_pooled, low_level_feat = self.backbone(input)
+        aspp_feat = self.aspp(x)
+        x = self.decoder(aspp_feat, low_pooled)
+        # x = F.interpolate(x, size=input.size()[2:], mode='bilinear', align_corners=True)
 
-        return x, pfm, low_level_feat
+        return x, aspp_feat, low_level_feat
 
     def freeze_bn(self):
         for m in self.modules():
@@ -94,7 +94,7 @@ class DeepLabX(nn.Module):
 if __name__ == "__main__":
     model = DeepLabX(backbone='resnet', output_stride=16, pretrain=False)
     model.eval()
-    input = torch.rand(1, 3, 256, 256)
+    input = torch.rand(1, 3, 512, 512)
     output = model(input)
     for x in output:
         print(x.size())

@@ -35,7 +35,6 @@ class ClickNet(nn.Module):
         aspp_feat = self.reduce_c_aspp(aspp_feat)
         x1 = torch.cat([down_map, aspp_feat, low_level_feat], dim=1)
         result1 = self.refine(x1)
-        result1 = F.interpolate(result1, gaussian_center_map.size()[2:], mode='bilinear', align_corners=True)
         return result1
 
     def _init_weight(self):

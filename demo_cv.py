@@ -8,7 +8,7 @@ import numpy as np
 from modeling.correction_net.sbox_net import *
 from modeling.correction_net.sbox_on_deeplab import *
 from modeling.correction_net.fusion_net import *
-from modeling.correction_net.click2 import ClickNet
+from modeling.correction_net.click5 import ClickNet
 from modeling.deeplab1 import DeepLabX
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
@@ -22,7 +22,7 @@ device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu
 # device = torch.device('cpu')
 
 wrapper_net = FusionNet(DeepLabX(pretrain=False), ClickNet())
-wrapper_net.load_state_dict(torch.load('run/click/fusion_8873.pth.tar')['state_dict'])
+wrapper_net.load_state_dict(torch.load('run/fusion_8907.pth.tar')['state_dict'])
 # wrapper_net.sbox_net.load_state_dict(torch.load('run/sbox/sbox_miou_8735.pth.tar', map_location=device)['state_dict'])
 wrapper_net.eval()
 wrapper_net = wrapper_net.to(device)
@@ -33,6 +33,7 @@ rect_drawed = False
 pos_points = []
 neg_points = []
 rect = []
+clicked = False
 
 
 def gaussian_clicks(clicks, shape, sigma=20):
@@ -47,14 +48,22 @@ def gaussian_clicks(clicks, shape, sigma=20):
     gt = gt.astype(np.float32)[np.newaxis, np.newaxis, ...]
     return torch.from_numpy(gt)
 
+
+def pred2cmap(pred):
+    final_pred = pred.data.cpu()
+    pred_score = F.softmax(final_pred)[0][1].numpy()
+    cmap = cv2.applyColorMap((pred_score * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    return cmap
+
 def mouse_cb(event, x, y, flag, para):
-    global pos_points, neg_points, rect_drawed, rect
+    global pos_points, neg_points, rect_drawed, rect, clicked
 
     if event == cv2.EVENT_LBUTTONDOWN:
         if rect_drawed:
             # Draw a green dot
             cv2.circle(im_disp, (x,y), 2, (0, 255, 0))
             pos_points.append((y - rect[0][1],x - rect[0][0]))
+            clicked = True
         else:
             rect.append((x, y))
     elif event == cv2.EVENT_LBUTTONUP:
@@ -68,9 +77,10 @@ def mouse_cb(event, x, y, flag, para):
             # draw a red dot
             cv2.circle(im_disp, (x,y), 2, (0, 0, 255))
             neg_points.append((y - rect[0][1],x - rect[0][0]))
+            clicked = True
 
 
-image = np.array(Image.open('ims/dog-cat.jpg'))
+image = np.array(Image.open('ims/speople.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
@@ -90,6 +100,7 @@ with torch.no_grad():
         elif key & 0xff == ord(' '):
             im_disp = image.copy()
             rect = []
+            clicked = False
             pos_points, neg_points = [], []
             rect_drawed = False
             wrapper_net.prev_pred = None
@@ -102,16 +113,22 @@ with torch.no_grad():
             sample = {}
 
             crop_image = image[rect[0][1]:rect[1][1], rect[0][0]:rect[1][0], :]
+            print(crop_image.shape)
+            pos_map = gaussian_clicks(pos_points, crop_image.shape[:2], 60)
+            pos_map = F.interpolate(pos_map, (256, 256), mode='bilinear')
+            neg_map = gaussian_clicks(neg_points, crop_image.shape[:2], 60)
+            neg_map = F.interpolate(neg_map, (256, 256), mode='bilinear')
             if wrapper_net.prev_pred is None:
-                resize_image = helpers.fixed_resize(crop_image, (512, 512)).astype(np.float32)
+                resize_image = helpers.fixed_resize(crop_image, (256, 256)).astype(np.float32)
                 sample['crop_image'] = resize_image
                 sample = test_transformer(sample)
                 inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
 
             # Run a forward pass
                 inputs = inputs.to(device)
-                pred, fused_feat_maps, low_feat = wrapper_net.sbox_net(inputs)
-                wrapper_net.prev_pred = pred
+                sbox_pred, fused_feat_maps, low_feat = wrapper_net.sbox_net(inputs)
+                print(sbox_pred.shape)
+                wrapper_net.prev_pred = sbox_pred
                 wrapper_net.low_feat = low_feat
                 wrapper_net.fused_feat_maps = fused_feat_maps
             else:
@@ -120,18 +137,37 @@ with torch.no_grad():
                 neg_map = gaussian_clicks(neg_points, crop_image.shape[:2], 60)
                 neg_map = F.interpolate(neg_map, (256, 256), mode='bilinear')
                 gdm = torch.cat([neg_map, pos_map], dim=1).to(device)
-                pred = wrapper_net.click_net(gdm, wrapper_net.fused_feat_maps, wrapper_net.low_feat)
-                sbox_pred_upsampled = F.interpolate(wrapper_net.prev_pred, size=pred.size()[2:], align_corners=True,
+                click_pred = wrapper_net.click_net(gdm, wrapper_net.fused_feat_maps, wrapper_net.low_feat)
+                sbox_pred_upsampled = F.interpolate(wrapper_net.prev_pred, size=click_pred.size()[2:],
+                                                    align_corners=True,
                                                     mode='bilinear')
-                click_pred = sbox_pred_upsampled + pred
-                pred = F.interpolate(click_pred, size=(512, 512), align_corners=True, mode='bilinear')
-                # wrapper_net.prev_pred = pred
-            pred = pred.data.cpu()
-            pred_score = F.softmax(pred)[0][0].numpy()
-            pred_abs = np.argmax(pred.numpy(), axis=1)[0].astype(np.uint8)
-            pred_img = cv2.resize(pred_score, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+                sum_pred = sbox_pred_upsampled + click_pred
+                sum_pred = F.interpolate(sum_pred, size=(512, 512), align_corners=True, mode='bilinear')
+                # wrapper_net.prev_pred = click_pred
+            if not clicked:
+                pred = sbox_pred
+            else:
+                pred = sum_pred
+            cmap_final = pred2cmap(pred)
+            print(pred.shape)
+            cmap_sbox = pred2cmap(wrapper_net.prev_pred)
+            print(wrapper_net.prev_pred.shape)
+            # camp_final = cv2.resize(cmap_final, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+            # camp_sbox = cv2.resize(cmap_sbox, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+            pos_map = cv2.resize(pos_map[0][0].data.numpy(), tuple(reversed(crop_image.shape[:2])),
+                                 interpolation=cv2.INTER_NEAREST)
+            neg_map = cv2.resize(neg_map[0][0].data.numpy(), tuple(reversed(crop_image.shape[:2])),
+                                 interpolation=cv2.INTER_NEAREST)
+            pred_abs = np.argmax(pred.cpu().numpy(), axis=1)[0].astype(np.uint8)
             pred_abs = cv2.resize(pred_abs, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
-            cv2.imshow('mask', pred_img)
+            cv2.imshow('mask', cmap_final)
+            if clicked:
+                cmap_click = pred2cmap(click_pred)
+                # camp_click = cv2.resize(cmap_click, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
+                cv2.imshow('click', cmap_click)
+            cv2.imshow('sbox', cmap_sbox)
+            cv2.imshow('pos', pos_map)
+            cv2.imshow('neg', neg_map)
             show_image = crop_image.copy()
             show_image[..., 0] = cv2.add(show_image[..., 0], pred_abs * 255)
             cv2.imshow('result', cv2.cvtColor(show_image, cv2.COLOR_RGB2BGR))

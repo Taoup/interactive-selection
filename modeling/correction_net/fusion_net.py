@@ -1,5 +1,6 @@
-from modeling.correction_net.click2 import *
+from modeling.correction_net.click5 import *
 from modeling.correction_net.sbox_on_deeplab import *
+from modeling.deeplab1 import DeepLabX
 import torch.nn as nn
 import numpy as np
 from scipy import ndimage
@@ -13,19 +14,16 @@ class FusionNet(nn.Module):
         self.sigma = sigma
 
     def forward(self, image, **input):
-        dimage = F.interpolate(image, size=(256, 256), align_corners=True, mode='bilinear')
-        sbox_pred, aspp_out, low_level_feat = self.sbox_net(dimage)
+        sbox_pred, aspp_out, low_level_feat = self.sbox_net(image)
         pos_map, neg_map = self._simulate_user_interaction(sbox_pred, input['crop_gt'])
         if image.is_cuda:
             pos_map, neg_map = pos_map.cuda(), neg_map.cuda()
         gaussian_center_map = torch.cat([neg_map, pos_map], dim=1)
-        # together = simulated_clicks + sbox_pred
-        # click_pred = self.click_net(together, aspp_out, low_level_feat)
         click_pred = self.click_net(gaussian_center_map, aspp_out, low_level_feat)
-        sbox_pred_upsampled = F.interpolate(sbox_pred, size=click_pred.size()[2:], align_corners=True, mode='bilinear')
-        click_pred = sbox_pred_upsampled + click_pred
-        click_pred = F.interpolate(click_pred, size=image.size()[2:], align_corners=True, mode='bilinear')
-        return sbox_pred, click_pred
+        click_pred = F.interpolate(click_pred, size=image.size()[-2:], align_corners=True, mode='bilinear')
+        sbox_pred = F.interpolate(sbox_pred, size=image.size()[-2:], align_corners=True, mode='bilinear')
+        sum_pred = sbox_pred + click_pred
+        return sbox_pred, click_pred, sum_pred
 
     def _simulate_user_interaction(self, pred, gt):
         _pred = torch.argmax(pred, dim=1).int()
@@ -76,11 +74,11 @@ if __name__ == '__main__':
     import cv2
 
     DEBUG = True
-    sbox = SBoxOnDeeplab()
+    sbox = DeepLabX(pretrain=False)
     fusion = FusionNet(sbox, ClickNet())
     fusion.eval()
     x = torch.randn(1, 3, 512, 512)
-    gt = torch.randn(1, 1, 512, 512)
+    gt = torch.randn(1, 512, 512)
     result = fusion(x, crop_gt=gt)
     for x in result:
         print(x.size())

@@ -9,7 +9,7 @@ from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.correction_net.fusion_net import *
 from modeling.deeplab1 import DeepLabX
 from modeling.correction_net.sbox_on_deeplab import *
-from modeling.correction_net.click4 import ClickNet
+from modeling.correction_net.click5 import ClickNet
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -40,7 +40,7 @@ class Trainer(object):
         # Define network
         sbox = DeepLabX(pretrain=False)
         sbox.load_state_dict(
-            torch.load('run/sbox/sbox_8697_256.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
+            torch.load('run/sbox/sbox_512_8662.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
         click = ClickNet()
         model = FusionNet(sbox=sbox, click=click)
         model.sbox_net.eval()
@@ -77,8 +77,8 @@ class Trainer(object):
 
         # Using cuda
         if args.cuda:
-            self.model = torch.nn.DataParallel(self.model, device_ids=self.args.gpu_ids)
-            patch_replication_callback(self.model)
+            # self.model = torch.nn.DataParallel(self.model, device_ids=self.args.gpu_ids)
+            # patch_replication_callback(self.model)
             self.model = self.model.cuda()
 
         # Resuming checkpoint
@@ -104,7 +104,7 @@ class Trainer(object):
 
     def training(self, epoch):
         train_loss = 0.0
-        self.model.train()
+        self.model.click_net.train()
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
@@ -113,8 +113,8 @@ class Trainer(object):
                 image, gt = image.cuda(), gt.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
-            sbox_pred, click_pred = self.model(image, crop_gt=gt)
-            loss1 = self.criterion(click_pred, gt) \
+            sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=gt)
+            loss1 = self.criterion(sum_pred, gt) \
                 # + self.criterion(sbox_pred, gt)
             loss1.backward()
             self.optimizer.step()
@@ -126,12 +126,12 @@ class Trainer(object):
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
-                grid_image = make_grid(decode_seg_map_sequence(torch.max(click_pred[:3], 1)[1].detach().cpu().numpy(),
+                grid_image = make_grid(decode_seg_map_sequence(torch.max(sbox_pred[:3], 1)[1].detach().cpu().numpy(),
                                                                dataset=self.args.dataset), 3, normalize=False,
                                        range=(0, 255))
                 self.summary.visualize_image(self.writer, self.args.dataset, image, sample['crop_gt'],
-                                             sbox_pred, global_step)
-                self.writer.add_image('click-net-corrections', grid_image, global_step)
+                                             sum_pred, global_step)
+                self.writer.add_image('sbox_pred', grid_image, global_step)
 
         self.writer.add_scalar('train/total_epochs', train_loss, epoch)
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
@@ -142,7 +142,7 @@ class Trainer(object):
             is_best = False
             self.saver.save_checkpoint({
                 'epoch': epoch + 1,
-                'state_dict': self.model.module.state_dict(),
+                'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
             }, is_best)
@@ -157,11 +157,11 @@ class Trainer(object):
             if self.args.cuda:
                 image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
-                sbox_pred, click_pred = self.model(image, crop_gt=gt)
-            loss1 = self.criterion(click_pred, gt)
+                sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=gt)
+            loss1 = self.criterion(sum_pred, gt)
             total_loss = loss1.item()
             test_loss += total_loss
-            pred = click_pred.data.cpu().numpy()
+            pred = sum_pred.data.cpu().numpy()
             target = gt.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator
@@ -188,7 +188,7 @@ class Trainer(object):
             self.best_pred = new_pred
             self.saver.save_checkpoint({
                 'epoch': epoch + 1,
-                'state_dict': self.model.module.state_dict(),
+                'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'best_pred': self.best_pred,
             }, is_best, prefix='click')
@@ -221,6 +221,8 @@ def main():
                         help='base image size')
     parser.add_argument('--crop-size', type=int, default=512,
                         help='crop image size')
+    parser.add_argument('--gt-size', type=int, default=512,
+                        help='crop ground truth size')
     parser.add_argument('--sync-bn', type=bool, default=False,
                         help='whether to use sync bn (default: False)')
     parser.add_argument('--freeze-bn', type=bool, default=False,

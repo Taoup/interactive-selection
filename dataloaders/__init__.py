@@ -6,18 +6,19 @@ from dataloaders import custom_transforms as tr
 
 def make_data_loader(args, **kwargs):
     crop_size = args.crop_size
+    gt_size = args.gt_size
     if args.dataset == 'pascal':
         composed_transforms_tr = transforms.Compose([
             tr.RandomHorizontalFlip(),
             tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
+            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (gt_size, gt_size)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()
         ])
         composed_transforms_val = transforms.Compose([
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True, jitters_bound=None),
-            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
+            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (gt_size, gt_size)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()])
         train_set = pascal.VOCSegmentation(split='train', transform=composed_transforms_tr)
