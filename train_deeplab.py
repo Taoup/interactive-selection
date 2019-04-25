@@ -32,7 +32,7 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = DeepLabX(backbone='resnet', output_stride=16, sync_bn=False)
+        model = DeepLabX(backbone='resnet', output_stride=args.out_stride, sync_bn=False)
 
         train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
                         {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
@@ -182,7 +182,7 @@ def main():
     parser.add_argument('--backbone', type=str, default='sbox_on_deeplab',
                         choices=['sbox_on_deeplab', 'xception', 'drn', 'mobilenet'],
                         help='backbone name (default: resnet)')
-    parser.add_argument('--out-stride', type=int, default=16,
+    parser.add_argument('--out-stride', type=int, default=8,
                         help='network output stride (default: 8)')
     parser.add_argument('--dataset', type=str, default='pascal',
                         choices=['pascal', 'coco', 'cityscapes'],

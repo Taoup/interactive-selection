@@ -77,8 +77,8 @@ if __name__ == '__main__':
     sbox = DeepLabX(pretrain=False)
     fusion = FusionNet(sbox, ClickNet())
     fusion.eval()
-    x = torch.randn(1, 3, 512, 512)
-    gt = torch.randn(1, 512, 512)
+    x = torch.randn(1, 3, 256, 256)
+    gt = torch.randn(1, 256, 256)
     result = fusion(x, crop_gt=gt)
     for x in result:
         print(x.size())

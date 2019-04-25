@@ -6,19 +6,18 @@ from dataloaders import custom_transforms as tr
 
 def make_data_loader(args, **kwargs):
     crop_size = args.crop_size
-    gt_size = args.gt_size
     if args.dataset == 'pascal':
         composed_transforms_tr = transforms.Compose([
             tr.RandomHorizontalFlip(),
             tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True),
-            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (gt_size, gt_size)}),
+            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()
         ])
         composed_transforms_val = transforms.Compose([
             tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True, jitters_bound=None),
-            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (gt_size, gt_size)}),
+            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
             tr.Normalize(elems='crop_image'),
             tr.ToTensor()])
         train_set = pascal.VOCSegmentation(split='train', transform=composed_transforms_tr)
@@ -54,25 +53,10 @@ def make_data_loader(args, **kwargs):
         return train_loader, val_loader, test_loader, num_class
 
     elif args.dataset == 'click':
-        tr_transform = transforms.Compose([
-            tr.RandomHorizontalFlip(),
-            tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
-            tr.CropFromMask(crop_elems=('image', 'gt'), jitters_bound=(5, 30)),
-            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
-            tr.Normalize(elems='crop_image'),
-            tr.ToTensor()
-        ])
-        val_transform = transforms.Compose([
-            tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True, jitters_bound=None),
-            tr.FixedResize(resolutions={'crop_image': (crop_size, crop_size), 'crop_gt': (crop_size, crop_size)}),
-            tr.Normalize(elems='crop_image'),
-            tr.ToTensor(),
-        ])
-        train_set = pascal.VOCSegmentation(split='train', transform=tr_transform)
-        train_set.reset_target_list(args)
-        val_set = pascal.VOCSegmentation(split='val', transform=val_transform)
+        train_set = click_dataset.ClickDataset(split='train')
+        val_set = click_dataset.ClickDataset(split='val')
         num_class = 2
-        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, drop_last=True, **kwargs)
+        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, **kwargs)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, **kwargs)
         test_loader = None
         return train_loader, val_loader, test_loader, num_class
