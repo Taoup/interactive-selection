@@ -10,7 +10,7 @@ def calculate_weigths_labels(dataset, dataloader, num_classes):
     tqdm_batch = tqdm(dataloader)
     print('Calculating classes weights')
     for sample in tqdm_batch:
-        y = sample['label']
+        y = sample['crop_gt']
         y = y.detach().cpu().numpy()
         mask = (y >= 0) & (y < num_classes)
         labels = y[mask].astype(np.uint8)

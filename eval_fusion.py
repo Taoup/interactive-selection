@@ -9,6 +9,8 @@ from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
 from modeling.deeplab1 import DeepLabX
+from modeling.correction_net.click5 import ClickNet
+from modeling.correction_net.fusion_net import FusionNet
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -33,9 +35,11 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = DeepLabX(backbone='resnet', output_stride=16, pretrain=False)
+        sbox = DeepLabX(backbone='resnet', output_stride=16, pretrain=False)
+        click = ClickNet()
+        model = FusionNet(sbox, click, pos_limit=2, neg_limit=2)
         model.load_state_dict(
-            torch.load('run/checkpoint.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
+            torch.load('run/fusion_513_9037.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
 
         # Define Criterion
         # whether to use class balanced weights
@@ -60,6 +64,23 @@ class Trainer(object):
             # patch_replication_callback(self.model)
             self.model = self.model.cuda()
 
+        # Resuming checkpoint
+        self.best_pred = 0.0
+        if args.resume is not None:
+            if not os.path.isfile(args.resume):
+                raise RuntimeError("=> no checkpoint found at '{}'".format(args.resume))
+            checkpoint = torch.load(args.resume)
+            args.start_epoch = checkpoint['epoch']
+            if args.cuda:
+                self.model.module.load_state_dict(checkpoint['state_dict'])
+            else:
+                self.model.load_state_dict(checkpoint['state_dict'])
+            if not args.ft:
+                self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.best_pred = checkpoint['best_pred']
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
+
         # Clear start epoch if fine-tuning
         if args.ft:
             args.start_epoch = 0
@@ -74,12 +95,12 @@ class Trainer(object):
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
             with torch.no_grad():
-                out1, _, _ = self.model(image)
-            out1 = F.interpolate(out1, size=target.size()[-2:], align_corners=True, mode='bilinear')
-            loss1 = self.criterion(out1, target)
+                sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=target)
+            sum_pred = F.interpolate(sum_pred, size=target.size()[-2:], align_corners=True, mode='bilinear')
+            loss1 = self.criterion(sum_pred, target)
             total_loss = loss1.item()
             test_loss += total_loss
-            pred = out1.data.cpu().numpy()
+            pred = sum_pred.data.cpu().numpy()
             target = target.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator
@@ -99,6 +120,8 @@ class Trainer(object):
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
         print('Loss: %.3f' % test_loss)
+        print("total clicks:", self.model.total_clicks)
+
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
@@ -107,21 +130,21 @@ def main():
                         help='backbone name (default: resnet)')
     parser.add_argument('--out-stride', type=int, default=16,
                         help='network output stride (default: 8)')
-    parser.add_argument('--dataset', type=str, default='coco',
-                        choices=['pascal', 'coco', 'cityscapes'],
+    parser.add_argument('--dataset', type=str, default='bekeley',
+                        choices=['pascal', 'coco', 'cityscapes', 'grabcut', 'bekeley'],
                         help='dataset name (default: pascal)')
     parser.add_argument('--coco-part', type=str, default='seen',
                         choices=['seen', 'unseen'],
                         help='part of coco dataset')
     parser.add_argument('--use-sbd', action='store_true', default=False,
                         help='whether to use SBD dataset (default: True)')
-    parser.add_argument('--workers', type=int, default=8,
+    parser.add_argument('--workers', type=int, default=4,
                         metavar='N', help='dataloader threads')
     parser.add_argument('--base-size', type=int, default=513,
                         help='base image size')
-    parser.add_argument('--gt-size', type=int, default=513,
-                        help='base image size')
     parser.add_argument('--crop-size', type=int, default=513,
+                        help='crop image size')
+    parser.add_argument('--gt-size', type=int, default=513,
                         help='crop image size')
     parser.add_argument('--sync-bn', type=bool, default=False,
                         help='whether to use sync bn (default: False)')
@@ -135,7 +158,7 @@ def main():
                         help='number of epochs to train (default: auto)')
     parser.add_argument('--start_epoch', type=int, default=0,
                         metavar='N', help='start epochs (default:0)')
-    parser.add_argument('--batch-size', type=int, default=4,
+    parser.add_argument('--batch-size', type=int, default=1,
                         metavar='N', help='input batch size for \
                                 training (default: auto)')
     parser.add_argument('--test-batch-size', type=int, default=None,
@@ -191,28 +214,11 @@ def main():
         else:
             args.sync_bn = False
 
-    # default settings for epochs, batch_size and lr
-    if args.epochs is None:
-        epoches = {
-            'coco': 30,
-            'cityscapes': 200,
-            'pascal': 50,
-        }
-        args.epochs = epoches[args.dataset.lower()]
-
     if args.batch_size is None:
         args.batch_size = 4 * len(args.gpu_ids)
 
     if args.test_batch_size is None:
         args.test_batch_size = args.batch_size
-
-    if args.lr is None:
-        lrs = {
-            'coco': 0.1,
-            'cityscapes': 0.01,
-            'pascal': 0.007,
-        }
-        args.lr = lrs[args.dataset.lower()] / (4 * len(args.gpu_ids)) * args.batch_size
 
     if args.checkname is None:
         args.checkname = 'deeplab-' + str(args.backbone)

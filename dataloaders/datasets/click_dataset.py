@@ -28,11 +28,10 @@ def compute_iou(y_pred, y_true):
 
 class ClickDataset(VOCSegmentation):
     def __init__(self, sbox_net=None, split='train', transform=None,
-                 sbox='sbox_miou_8527.pth.tar',
+                 sbox='sbox_513_8925.pth.tar',
                  miou_thres=0.85,
                  which='click'):
-        if not sbox_net:
-            sbox_net = utils.load_model(DeepLabX(pretrain=False), 'run/sbox/' + sbox)
+        sbox_net = utils.load_model(DeepLabX(pretrain=False), 'run/sbox/' + sbox)
 
         VOCSegmentation.__init__(self,
                                  root=Path.db_root_dir('pascal'),

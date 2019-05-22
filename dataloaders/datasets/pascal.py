@@ -136,7 +136,7 @@ class VOCSegmentation(data.Dataset):
                             '-'.join([args.sbox, 'mIoU_thres', str(args.low_thres), str(args.high_thres), 'on',
                                       args.which, 'sets']) + '.txt')
         self.target_list = json.load(open(path, 'r'))
-        print('After filtering out object with miou below {} and above {}, number of objects:{}'.format(args.low_thres,
+        print('After filtering out object with miou above {} and below {}, number of objects:{}'.format(args.low_thres,
                                                                                                         args.high_thres,
                                                                                                         len(
                                                                                                             self.target_list)))
@@ -295,16 +295,17 @@ if __name__ == '__main__':
     from torchvision import transforms
 
     transform = transforms.Compose([
-        tr.CropFromMask(crop_elems=('image', 'gt'), relax=100, zero_pad=True, jitters_bound=(10, 30)),
         tr.RandomHorizontalFlip(),
         tr.ScaleNRotate(rots=(-20, 20), scales=(.75, 1.25)),
-        # tr.CropFromMask(crop_elems=('image', 'gt'), relax=5, zero_pad=True, jitters_bound=None),
+        # tr.CropFromMask(crop_elems=('image', 'gt'), relax=30, zero_pad=False, jitters_bound=(10, 30)),
+        tr.CropFromMask(crop_elems=('image', 'gt'), relax=30, zero_pad=False, jitters_bound=(30, 31)),
+        # tr.CropFromMask(crop_elems=('image', 'gt'), relax=30, zero_pad=False, jitters_bound=None),
         tr.FixedResize(resolutions={'crop_image': (256, 256), 'crop_gt': (256, 256)}),
         tr.Normalize(elems='crop_image'),
         # tr.ToImage(norm_elem=('pos_map', 'neg_map')),
     ])
 
-    dataset = VOCSegmentation(split=['train'], transform=transform, retname=True)
+    dataset = VOCSegmentation(split=['val'], transform=transform, retname=True)
     # dataset = VOCSegmentation(split=['train', 'val'], retname=True)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 

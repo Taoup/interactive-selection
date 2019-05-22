@@ -6,6 +6,7 @@ import dataloaders.custom_transforms as tr
 from modeling.deeplab1 import DeepLabX
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import confusion_matrix
 import json
@@ -42,10 +43,10 @@ def compute_iou(y_pred, y_true):
     return np.mean(iou)
 
 
-def extract_hard_example(args, batch_size=8):
+def extract_hard_example(args, batch_size=8, recal=False):
     transform = transforms.Compose([
-        tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True, jitters_bound=None),
-        tr.FixedResize(resolutions={'crop_image': (512, 512), 'crop_gt': (512, 512)}),
+        tr.CropFromMask(crop_elems=('image', 'gt'), relax=20, zero_pad=True, jitters_bound=(40, 70)),
+        tr.FixedResize(resolutions={'crop_image': (513, 513), 'crop_gt': (513, 513)}),
         tr.Normalize(elems='crop_image'),
         tr.ToTensor(),
     ])
@@ -63,11 +64,11 @@ def extract_hard_example(args, batch_size=8):
     click_list_file = os.path.join(dataset.root, dataset.BASE_DIR, 'ImageSets', 'Segmentation',
                                    '-'.join([args.sbox, 'mIoU_thres', str(args.low_thres), str(args.high_thres), 'on',
                                              args.which, 'sets']) + '.txt')
-    if os.path.isfile(click_list_file):
+    if os.path.isfile(click_list_file) and not recal:
         return
     device = torch.device("cuda:" + str(0) if torch.cuda.is_available() else "cpu")
     sbox_net = DeepLabX(pretrain=False)
-    path = 'run/sbox/' + args.sbox
+    path = 'run/' + args.sbox
     sbox_net.load_state_dict(torch.load(path, map_location=device)['state_dict'])
     sbox_net = sbox_net.to(device)
     sbox_net.eval()
@@ -81,6 +82,7 @@ def extract_hard_example(args, batch_size=8):
         with torch.no_grad():
             pred, _, _ = sbox_net(image)
 
+        pred = F.interpolate(pred, size=gt.size()[-2:], mode='bilinear', align_corners=True)
         pred = pred.data.cpu().numpy()
         target = gt.cpu().numpy()
         pred = np.argmax(pred, axis=1)

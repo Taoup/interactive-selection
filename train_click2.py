@@ -34,21 +34,23 @@ class Trainer(object):
 
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
-        # extract_hard_example(args, batch_size=32)
+        if args.dataset == 'click':
+            extract_hard_example(args, batch_size=32, recal=False)
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
         sbox = DeepLabX(pretrain=False)
         sbox.load_state_dict(
-            torch.load('run/sbox/sbox_256_8692.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
+            torch.load('run/sbox_psp_8882.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
         click = ClickNet()
-        model = FusionNet(sbox=sbox, click=click)
+        model = FusionNet(sbox=sbox, click=click, pos_limit=2, neg_limit=2)
         model.sbox_net.eval()
         for para in model.sbox_net.parameters():
             para.requires_grad = False
 
         train_params = [{'params': model.click_net.parameters(), 'lr': args.lr},
-                        # {'params': model.sbox_net.parameters(), 'lr': args.lr*0.01}
+                        # {'params': model.sbox_net.get_1x_lr_params(), 'lr': args.lr*0.001}
+                        # {'params': model.sbox_net.get_train_click_params(), 'lr': args.lr*0.001}
                         ]
 
         # Define Optimizer
@@ -104,7 +106,8 @@ class Trainer(object):
 
     def training(self, epoch):
         train_loss = 0.0
-        self.model.click_net.train()
+        self.model.train()
+        self.model.sbox_net.eval()
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
@@ -114,6 +117,8 @@ class Trainer(object):
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
             sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=gt)
+            sum_pred = F.interpolate(sum_pred, size=gt.size()[-2:], align_corners=True, mode='bilinear')
+            sbox_pred = F.interpolate(sbox_pred, size=gt.size()[-2:], align_corners=True, mode='bilinear')
             loss1 = self.criterion(sum_pred, gt) \
                 # + self.criterion(sbox_pred, gt)
             loss1.backward()
@@ -152,12 +157,16 @@ class Trainer(object):
         self.evaluator.reset()
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
+        total_clicks = 0
         for i, sample in enumerate(tbar):
             image, gt = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
                 image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
                 sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=gt)
+                # sum_pred, clicks = self.model.click_eval(image, gt)
+            # total_clicks += clicks
+            sum_pred = F.interpolate(sum_pred, size=gt.size()[-2:], align_corners=True, mode='bilinear')
             loss1 = self.criterion(sum_pred, gt)
             total_loss = loss1.item()
             test_loss += total_loss
@@ -181,6 +190,7 @@ class Trainer(object):
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
         print('Loss: %.3f' % test_loss)
+        # print('total clicks:' , total_clicks)
 
         new_pred = mIoU
         if new_pred > self.best_pred:
@@ -201,9 +211,9 @@ def main():
                         help='backbone name (default: resnet)')
     parser.add_argument('--out-stride', type=int, default=16,
                         help='network output stride (default: 8)')
-    parser.add_argument('--sbox', type=str, default='sbox_miou_8527.pth.tar',
+    parser.add_argument('--sbox', type=str, default='sbox_513_8925.pth.tar',
                         help='which sbox net to use')
-    parser.add_argument('--low_thres', type=float, default=.70,
+    parser.add_argument('--low_thres', type=float, default=.3,
                         help='low threshold for miou')
     parser.add_argument('--high_thres', type=float, default=.95,
                         help='high threshold for miou')
@@ -217,11 +227,11 @@ def main():
                         help='whether to use SBD dataset (default: True)')
     parser.add_argument('--workers', type=int, default=8,
                         metavar='N', help='dataloader threads')
-    parser.add_argument('--base-size', type=int, default=256,
+    parser.add_argument('--base-size', type=int, default=513,
                         help='base image size')
-    parser.add_argument('--crop-size', type=int, default=256,
+    parser.add_argument('--crop-size', type=int, default=513,
                         help='crop image size')
-    parser.add_argument('--gt-size', type=int, default=256,
+    parser.add_argument('--gt-size', type=int, default=513,
                         help='crop ground truth size')
     parser.add_argument('--sync-bn', type=bool, default=False,
                         help='whether to use sync bn (default: False)')

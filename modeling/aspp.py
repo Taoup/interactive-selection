@@ -42,6 +42,7 @@ class ASPP(nn.Module):
             inplanes = 2048
         if output_stride == 16:
             dilations = [1, 6, 12, 18]
+            # dilations = [1, 5, 10, 15]
         elif output_stride == 8:
             dilations = [1, 12, 24, 36]
         else:
@@ -91,5 +92,58 @@ class ASPP(nn.Module):
                 m.bias.data.zero_()
 
 
+affine_par = True
+
+
+class PSPModule(nn.Module):
+    """
+    Pyramid Scene Parsing module
+    """
+
+    def __init__(self, in_features=2048, out_features=512, sizes=(1, 2, 3, 6), n_classes=1):
+        super(PSPModule, self).__init__()
+        self.stages = []
+        self.stages = nn.ModuleList([self._make_stage_1(in_features, size) for size in sizes])
+        self.bottleneck = self._make_stage_2(in_features * (len(sizes) // 4 + 1), out_features)
+        self.relu = nn.ReLU()
+        # self.final = nn.Conv2d(out_features, n_classes, kernel_size=1)
+
+    def _make_stage_1(self, in_features, size):
+        prior = nn.AdaptiveAvgPool2d(output_size=(size, size))
+        conv = nn.Conv2d(in_features, in_features // 4, kernel_size=1, bias=False)
+        bn = nn.BatchNorm2d(in_features // 4, affine=affine_par)
+        relu = nn.ReLU(inplace=True)
+
+        return nn.Sequential(prior, conv, bn, relu)
+
+    def _make_stage_2(self, in_features, out_features):
+        conv = nn.Conv2d(in_features, out_features, kernel_size=1, bias=False)
+        bn = nn.BatchNorm2d(out_features, affine=affine_par)
+        relu = nn.ReLU(inplace=True)
+
+        return nn.Sequential(conv, bn, relu)
+
+    def forward(self, feats):
+        h, w = feats.size(2), feats.size(3)
+        priors = [F.upsample(input=stage(feats), size=(h, w), mode='bilinear', align_corners=True) for stage in
+                  self.stages]
+        priors.append(feats)
+        bottle = self.relu(self.bottleneck(torch.cat(priors, 1)))
+        # out = self.final(bottle)
+
+        return bottle
+
+
 def build_aspp(backbone, output_stride, BatchNorm):
     return ASPP(backbone, output_stride, BatchNorm)
+
+
+def build_psp():
+    return PSPModule(out_features=256)
+
+
+def build_naiveGCE():
+    conv = nn.Conv2d(2048, 256, 1, bias=False)
+    bn = nn.BatchNorm2d(256)
+    relu = nn.ReLU(inplace=True)
+    return nn.Sequential(conv, bn, relu)

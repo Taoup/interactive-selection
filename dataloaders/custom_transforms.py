@@ -286,7 +286,7 @@ class CropFromMask(object):
                  mask_elem='gt',
                  relax=0,
                  zero_pad=False,
-                 jitters_bound=(5, 30)):
+                 jitters_bound=(0, 30)):
 
         self.crop_elems = crop_elems
         self.mask_elem = mask_elem

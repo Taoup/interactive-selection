@@ -22,7 +22,7 @@ device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu
 # device = torch.device('cpu')
 
 wrapper_net = FusionNet(DeepLabX(pretrain=False), ClickNet())
-wrapper_net.load_state_dict(torch.load('run/fusion_8907.pth.tar')['state_dict'])
+wrapper_net.load_state_dict(torch.load('run/fusion_513_9037.pth.tar')['state_dict'])
 # wrapper_net.sbox_net.load_state_dict(torch.load('run/sbox/sbox_miou_8735.pth.tar', map_location=device)['state_dict'])
 wrapper_net.eval()
 wrapper_net = wrapper_net.to(device)
@@ -80,7 +80,7 @@ def mouse_cb(event, x, y, flag, para):
             clicked = True
 
 
-image = np.array(Image.open('ims/speople.jpg'))
+image = np.array(Image.open('ims/376043.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
@@ -115,11 +115,11 @@ with torch.no_grad():
             crop_image = image[rect[0][1]:rect[1][1], rect[0][0]:rect[1][0], :]
             print(crop_image.shape)
             pos_map = gaussian_clicks(pos_points, crop_image.shape[:2], 60)
-            pos_map = F.interpolate(pos_map, (256, 256), mode='bilinear')
+            pos_map = F.interpolate(pos_map, (513, 513), mode='bilinear')
             neg_map = gaussian_clicks(neg_points, crop_image.shape[:2], 60)
-            neg_map = F.interpolate(neg_map, (256, 256), mode='bilinear')
+            neg_map = F.interpolate(neg_map, (513, 513), mode='bilinear')
             if wrapper_net.prev_pred is None:
-                resize_image = helpers.fixed_resize(crop_image, (256, 256)).astype(np.float32)
+                resize_image = helpers.fixed_resize(crop_image, (513, 513)).astype(np.float32)
                 sample['crop_image'] = resize_image
                 sample = test_transformer(sample)
                 inputs = torch.from_numpy(sample['crop_image'].transpose((2, 0, 1))[np.newaxis, ...])
@@ -127,22 +127,25 @@ with torch.no_grad():
             # Run a forward pass
                 inputs = inputs.to(device)
                 sbox_pred, fused_feat_maps, low_feat = wrapper_net.sbox_net(inputs)
+                sbox_pred = F.interpolate(sbox_pred, crop_image.shape[:2], align_corners=True, mode='bilinear')
                 print(sbox_pred.shape)
                 wrapper_net.prev_pred = sbox_pred
                 wrapper_net.low_feat = low_feat
                 wrapper_net.fused_feat_maps = fused_feat_maps
             else:
                 pos_map = gaussian_clicks(pos_points, crop_image.shape[:2], 60)
-                pos_map = F.interpolate(pos_map, (256, 256), mode='bilinear')
+                pos_map = F.interpolate(pos_map, (513, 513), mode='bilinear')
                 neg_map = gaussian_clicks(neg_points, crop_image.shape[:2], 60)
-                neg_map = F.interpolate(neg_map, (256, 256), mode='bilinear')
+                neg_map = F.interpolate(neg_map, (513, 513), mode='bilinear')
                 gdm = torch.cat([neg_map, pos_map], dim=1).to(device)
                 click_pred = wrapper_net.click_net(gdm, wrapper_net.fused_feat_maps, wrapper_net.low_feat)
+                click_pred = F.interpolate(click_pred, crop_image.shape[:2], align_corners=True, mode='bilinear')
+
                 sbox_pred_upsampled = F.interpolate(wrapper_net.prev_pred, size=click_pred.size()[2:],
                                                     align_corners=True,
                                                     mode='bilinear')
                 sum_pred = sbox_pred_upsampled + click_pred
-                sum_pred = F.interpolate(sum_pred, size=(512, 512), align_corners=True, mode='bilinear')
+                # sum_pred = F.interpolate(sum_pred, size=(512, 512), align_corners=True, mode='bilinear')
                 # wrapper_net.prev_pred = click_pred
             if not clicked:
                 pred = sbox_pred
