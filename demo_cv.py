@@ -78,7 +78,7 @@ def mouse_cb(event, x, y, flag, para):
             clicked = True
 
 
-image = np.array(Image.open('ims/bear.jpg'))
+image = np.array(Image.open('ims/2007_008222.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
