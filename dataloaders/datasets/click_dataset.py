@@ -1,5 +1,5 @@
 from dataloaders.datasets.pascal import VOCSegmentation
-from modeling.deeplab1 import DeepLabX
+from modeling.deeplab import DeepLabX
 from mypath import Path
 import dataloaders.custom_transforms as tr
 import torch

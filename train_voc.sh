@@ -1,1 +1,0 @@
-python train.py --backbone resnet --lr 3.007 --workers 4 --use-sbd --epochs 50 --batch-size 16 --gpu-ids 0,1,2,3 --checkname deeplab-resnet --eval-interval 1 --dataset pascal

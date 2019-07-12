@@ -3,20 +3,21 @@ import os
 import numpy as np
 from tqdm import tqdm
 
-import torch
-import torch.nn.functional as F
 from mypath import Path
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
-from modeling.deeplab1 import DeepLabX
-from modeling.correction_net.click5 import ClickNet
-from modeling.correction_net.fusion_net import FusionNet
+from modeling.correction_net.fusion_net import *
+from modeling.deeplab import DeepLabX
+from modeling.correction_net.click import ClickNet
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
 from utils.saver import Saver
 from utils.summaries import TensorboardSummary
 from utils.metrics import Evaluator
+from torchvision.utils import make_grid
+from dataloaders.utils import decode_seg_map_sequence
+from dataloaders.datasets.utils import extract_hard_example
 
 
 class Trainer(object):
@@ -32,14 +33,28 @@ class Trainer(object):
 
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': False}
+        if args.dataset == 'click':
+            extract_hard_example(args, batch_size=32, recal=False)
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        sbox = DeepLabX(backbone='resnet', output_stride=16, pretrain=False)
+        sbox = DeepLabX(pretrain=False)
+        sbox.load_state_dict(
+            torch.load('run/sbox_513_8925.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
         click = ClickNet()
-        model = FusionNet(sbox, click, pos_limit=2, neg_limit=2)
-        model.load_state_dict(
-            torch.load('run/fusion_513_9037.pth.tar', map_location=torch.device('cuda:0'))['state_dict'])
+        model = FusionNet(sbox=sbox, click=click, pos_limit=2, neg_limit=2)
+        model.sbox_net.eval()
+        for para in model.sbox_net.parameters():
+            para.requires_grad = False
+
+        train_params = [{'params': model.click_net.parameters(), 'lr': args.lr},
+                        # {'params': model.sbox_net.get_1x_lr_params(), 'lr': args.lr*0.001}
+                        # {'params': model.sbox_net.get_train_click_params(), 'lr': args.lr*0.001}
+                        ]
+
+        # Define Optimizer
+        optimizer = torch.optim.SGD(train_params, momentum=args.momentum,
+                                    weight_decay=args.weight_decay, nesterov=args.nesterov)
 
         # Define Criterion
         # whether to use class balanced weights
@@ -53,10 +68,13 @@ class Trainer(object):
         else:
             weight = None
         self.criterion = SegmentationLosses(weight=weight, cuda=args.cuda).build_loss(mode=args.loss_type)
-        self.model = model
+        self.model, self.optimizer = model, optimizer
 
         # Define Evaluator
         self.evaluator = Evaluator(self.nclass)
+        # Define lr scheduler
+        self.scheduler = LR_Scheduler(args.lr_scheduler, args.lr,
+                                      args.epochs, len(self.train_loader))
 
         # Using cuda
         if args.cuda:
@@ -85,23 +103,74 @@ class Trainer(object):
         if args.ft:
             args.start_epoch = 0
 
+    def training(self, epoch):
+        train_loss = 0.0
+        self.model.train()
+        self.model.sbox_net.eval()
+        tbar = tqdm(self.train_loader)
+        num_img_tr = len(self.train_loader)
+        for i, sample in enumerate(tbar):
+            image, gt = sample['crop_image'], sample['crop_gt']
+            if self.args.cuda:
+                image, gt = image.cuda(), gt.cuda()
+            self.scheduler(self.optimizer, i, epoch, self.best_pred)
+            self.optimizer.zero_grad()
+            sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=gt)
+            sum_pred = F.interpolate(sum_pred, size=gt.size()[-2:], align_corners=True, mode='bilinear')
+            sbox_pred = F.interpolate(sbox_pred, size=gt.size()[-2:], align_corners=True, mode='bilinear')
+            loss1 = self.criterion(sum_pred, gt) \
+                # + self.criterion(sbox_pred, gt)
+            loss1.backward()
+            self.optimizer.step()
+            total_loss = loss1.item()
+            train_loss += total_loss
+            tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
+            self.writer.add_scalar('train/total_steps', total_loss, i + num_img_tr * epoch)
+
+            # Show 10 * 3 inference results each epoch
+            if i % (num_img_tr // 10) == 0:
+                global_step = i + num_img_tr * epoch
+                grid_image = make_grid(decode_seg_map_sequence(torch.max(sbox_pred[:3], 1)[1].detach().cpu().numpy(),
+                                                               dataset=self.args.dataset), 3, normalize=False,
+                                       range=(0, 255))
+                self.summary.visualize_image(self.writer, self.args.dataset, image, sample['crop_gt'],
+                                             sum_pred, global_step)
+                self.writer.add_image('sbox_pred', grid_image, global_step)
+
+        self.writer.add_scalar('train/total_epochs', train_loss, epoch)
+        print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
+        print('Loss: %.3f' % train_loss)
+
+        if self.args.no_val:
+            # save checkpoint every epoch
+            is_best = False
+            self.saver.save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': self.model.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+                'best_pred': self.best_pred,
+            }, is_best)
+
     def validation(self, epoch):
         self.model.eval()
         self.evaluator.reset()
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
+        total_clicks = 0
         for i, sample in enumerate(tbar):
-            image, target = sample['crop_image'], sample['crop_gt']
+            image, gt = sample['crop_image'], sample['crop_gt']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                image, gt = image.cuda(), gt.cuda()
             with torch.no_grad():
-                sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=target)
-            sum_pred = F.interpolate(sum_pred, size=target.size()[-2:], align_corners=True, mode='bilinear')
-            loss1 = self.criterion(sum_pred, target)
+                sbox_pred, click_pred, sum_pred = self.model(image, crop_gt=gt)
+                # sum_pred, clicks = self.model.click_eval(image, gt)
+            # total_clicks += clicks
+            sum_pred = F.interpolate(sum_pred, size=gt.size()[-2:], align_corners=True, mode='bilinear')
+            loss1 = self.criterion(sum_pred, gt)
             total_loss = loss1.item()
             test_loss += total_loss
             pred = sum_pred.data.cpu().numpy()
-            target = target.cpu().numpy()
+            target = gt.cpu().numpy()
             pred = np.argmax(pred, axis=1)
             # Add batch sample into evaluator
             self.evaluator.add_batch(target, pred)
@@ -111,7 +180,7 @@ class Trainer(object):
         Acc_class = self.evaluator.Pixel_Accuracy_Class()
         mIoU = self.evaluator.Mean_Intersection_over_Union()
         FWIoU = self.evaluator.Frequency_Weighted_Intersection_over_Union()
-        self.writer.add_scalar('val/total_loss_epoch', test_loss, epoch)
+        self.writer.add_scalar('val/total_epochs', test_loss, epoch)
         self.writer.add_scalar('val/mIoU', mIoU, epoch)
         self.writer.add_scalar('val/Acc', Acc, epoch)
         self.writer.add_scalar('val/Acc_class', Acc_class, epoch)
@@ -120,32 +189,49 @@ class Trainer(object):
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
         print('Loss: %.3f' % test_loss)
-        print("total clicks:", self.model.total_clicks)
+        # print('total clicks:' , total_clicks)
+
+        new_pred = mIoU
+        if new_pred > self.best_pred:
+            is_best = True
+            self.best_pred = new_pred
+            self.saver.save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': self.model.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+                'best_pred': self.best_pred,
+            }, is_best, prefix='click')
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PyTorch DeeplabV3Plus Training")
-    parser.add_argument('--backbone', type=str, default='sbox_on_deeplab',
-                        choices=['sbox_on_deeplab', 'xception', 'drn', 'mobilenet'],
+    parser = argparse.ArgumentParser(description="PyTorch Deep interactive object selection")
+    parser.add_argument('--backbone', type=str, default='click',
+                        choices=['click', 'xception', 'drn', 'mobilenet'],
                         help='backbone name (default: resnet)')
     parser.add_argument('--out-stride', type=int, default=16,
                         help='network output stride (default: 8)')
-    parser.add_argument('--dataset', type=str, default='bekeley',
-                        choices=['pascal', 'coco', 'cityscapes', 'grabcut', 'bekeley'],
+    parser.add_argument('--sbox', type=str, default='sbox_513_8925.pth.tar',
+                        help='which sbox net to use')
+    parser.add_argument('--low_thres', type=float, default=.3,
+                        help='low threshold for miou')
+    parser.add_argument('--high_thres', type=float, default=.95,
+                        help='high threshold for miou')
+    parser.add_argument('--which', type=str, default='whole',
+                        choices=['whole', 'sbox', 'click'],
+                        help='data to choose')
+    parser.add_argument('--dataset', type=str, default='click',
+                        choices=['pascal', 'coco', 'cityscapes', 'click'],
                         help='dataset name (default: pascal)')
-    parser.add_argument('--coco-part', type=str, default='seen',
-                        choices=['seen', 'unseen'],
-                        help='part of coco dataset')
     parser.add_argument('--use-sbd', action='store_true', default=False,
                         help='whether to use SBD dataset (default: True)')
-    parser.add_argument('--workers', type=int, default=4,
+    parser.add_argument('--workers', type=int, default=8,
                         metavar='N', help='dataloader threads')
     parser.add_argument('--base-size', type=int, default=513,
                         help='base image size')
     parser.add_argument('--crop-size', type=int, default=513,
                         help='crop image size')
     parser.add_argument('--gt-size', type=int, default=513,
-                        help='crop image size')
+                        help='crop ground truth size')
     parser.add_argument('--sync-bn', type=bool, default=False,
                         help='whether to use sync bn (default: False)')
     parser.add_argument('--freeze-bn', type=bool, default=False,
@@ -158,7 +244,7 @@ def main():
                         help='number of epochs to train (default: auto)')
     parser.add_argument('--start_epoch', type=int, default=0,
                         metavar='N', help='start epochs (default:0)')
-    parser.add_argument('--batch-size', type=int, default=1,
+    parser.add_argument('--batch-size', type=int, default=4,
                         metavar='N', help='input batch size for \
                                 training (default: auto)')
     parser.add_argument('--test-batch-size', type=int, default=None,
@@ -214,18 +300,43 @@ def main():
         else:
             args.sync_bn = False
 
+    # default settings for epochs, batch_size and lr
+    if args.epochs is None:
+        epoches = {
+            'coco': 30,
+            'cityscapes': 200,
+            'pascal': 50,
+        }
+        args.epochs = epoches[args.dataset.lower()]
+
     if args.batch_size is None:
         args.batch_size = 4 * len(args.gpu_ids)
 
     if args.test_batch_size is None:
         args.test_batch_size = args.batch_size
 
+    if args.lr is None:
+        lrs = {
+            'coco': 0.1,
+            'cityscapes': 0.01,
+            'pascal': 0.007,
+            'click': 0.007,
+        }
+        args.lr = lrs[args.dataset.lower()] / (4 * len(args.gpu_ids)) * args.batch_size
+
     if args.checkname is None:
         args.checkname = 'deeplab-' + str(args.backbone)
     print(args)
     torch.manual_seed(args.seed)
     trainer = Trainer(args)
-    trainer.validation(0)
+    print('Starting Epoch:', trainer.args.start_epoch)
+    print('Total Epoches:', trainer.args.epochs)
+    for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
+        trainer.training(epoch)
+        if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
+            trainer.validation(epoch)
+
+    trainer.writer.close()
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import numpy as np
 import pickle
 
 import torch.utils.data as data
-from modeling.deeplab1 import DeepLabX
+from modeling.deeplab import DeepLabX
 from PIL import Image
 from six.moves import urllib
 import json
@@ -316,7 +316,7 @@ if __name__ == '__main__':
             if cv2.waitKey(1) & 0xff == ord('q'):
                 break
 
-        if i == 4:
+        if i == 1:
             break
 
     plt.show(block=True)

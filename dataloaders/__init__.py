@@ -1,6 +1,6 @@
 from dataloaders.datasets import cityscapes, combine_dbs, pascal, sbd, click_dataset
-from dataloaders.datasets import coco_eval
-from dataloaders.datasets import grab_berkeley_eval
+# from dataloaders.datasets import coco_eval
+# from dataloaders.datasets import grab_berkeley_eval
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from dataloaders import custom_transforms as tr

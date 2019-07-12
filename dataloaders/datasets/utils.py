@@ -3,7 +3,7 @@ from mypath import Path
 from dataloaders.datasets.pascal import VOCSegmentation
 from torchvision import transforms
 import dataloaders.custom_transforms as tr
-from modeling.deeplab1 import DeepLabX
+from modeling.deeplab import DeepLabX
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import torch.nn.functional as F

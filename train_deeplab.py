@@ -4,10 +4,9 @@ import numpy as np
 from tqdm import tqdm
 
 from mypath import Path
-from modeling.deeplab1 import DeepLabX
+from modeling.deeplab import DeepLabX
 from dataloaders import make_data_loader
 from modeling.sync_batchnorm.replicate import patch_replication_callback
-from modeling.correction_net.sbox_on_deeplab import *
 from utils.loss import SegmentationLosses
 from utils.calculate_weights import calculate_weigths_labels
 from utils.lr_scheduler import LR_Scheduler
@@ -32,7 +31,9 @@ class Trainer(object):
         self.train_loader, self.val_loader, self.test_loader, self.nclass = make_data_loader(args, **kwargs)
 
         # Define network
-        model = DeepLabX(backbone='resnet', output_stride=args.out_stride, sync_bn=False)
+        model = DeepLabX(backbone='resnet', output_stride=args.out_stride, sync_bn=False, pretrain=False)
+        print("transfer learning from pascal dataset")
+        model.load_state_dict(torch.load('run/sbox.pth.tar'))
 
         train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
                         {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
@@ -94,7 +95,7 @@ class Trainer(object):
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
-            image, target = sample['crop_image'], sample['crop_gt']
+            image, target = sample['img'], sample['gt']
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
             self.scheduler(self.optimizer, i, epoch, self.best_pred, power=1.1)
@@ -112,7 +113,7 @@ class Trainer(object):
             # Show 10 * 3 inference results each epoch
             if i % (num_img_tr // 10) == 0:
                 global_step = i + num_img_tr * epoch
-                self.summary.visualize_image(self.writer, self.args.dataset, sample['crop_image'], target, out1,
+                self.summary.visualize_image(self.writer, self.args.dataset, sample['img'], target, out1,
                                              global_step)
 
         self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
@@ -135,7 +136,7 @@ class Trainer(object):
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            image, target = sample['crop_image'], sample['crop_gt']
+            image, target = sample['img'], sample['gt']
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
             with torch.no_grad():
@@ -185,7 +186,7 @@ def main():
     parser.add_argument('--out-stride', type=int, default=8,
                         help='network output stride (default: 8)')
     parser.add_argument('--dataset', type=str, default='pascal',
-                        choices=['pascal', 'coco', 'cityscapes'],
+                        choices=['pascal', 'coco', 'cityscapes', 'tmall'],
                         help='dataset name (default: pascal)')
     parser.add_argument('--use-sbd', action='store_true', default=False,
                         help='whether to use SBD dataset (default: True)')
@@ -215,7 +216,7 @@ def main():
     parser.add_argument('--test-batch-size', type=int, default=None,
                         metavar='N', help='input batch size for \
                                 testing (default: auto)')
-    parser.add_argument('--use-balanced-weights', action='store_true', default=True,
+    parser.add_argument('--use-balanced-weights', action='store_true', default=False,
                         help='whether to use balanced weights (default: False)')
     # optimizer params
     parser.add_argument('--lr', type=float, default=None, metavar='LR',

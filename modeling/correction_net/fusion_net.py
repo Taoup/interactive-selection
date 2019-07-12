@@ -1,6 +1,5 @@
-from modeling.correction_net.click5 import *
-from modeling.correction_net.sbox_on_deeplab import *
-from modeling.deeplab1 import DeepLabX
+from modeling.correction_net.click import *
+from modeling.deeplab import DeepLabX
 import torch.nn as nn
 import numpy as np
 from scipy import ndimage
@@ -47,11 +46,11 @@ class FusionNet(nn.Module):
                 FPs = (_pred > gt[j].int())
                 FNs = (_pred < gt[j].int())
                 if (FPs.sum() > FNs.sum()):
-                    pos_map = self.__gen_EDM(torch.unsqueeze(FNs, dim=0), 1)
-                    neg_map = self.__gen_EDM(torch.unsqueeze(FPs, dim=0), 0)
+                    pos_map = self.__gen_GCM(torch.unsqueeze(FNs, dim=0), 1)
+                    neg_map = self.__gen_GCM(torch.unsqueeze(FPs, dim=0), 0)
                 else:
-                    pos_map = self.__gen_EDM(torch.unsqueeze(FNs, dim=0), 0)
-                    neg_map = self.__gen_EDM(torch.unsqueeze(FPs, dim=0), 1)
+                    pos_map = self.__gen_GCM(torch.unsqueeze(FNs, dim=0), 0)
+                    neg_map = self.__gen_GCM(torch.unsqueeze(FPs, dim=0), 1)
                 if image.is_cuda:
                     pos_map, neg_map = pos_map.cuda(), neg_map.cuda()
                 gaussian_center_map = torch.cat([neg_map, pos_map], dim=1)
@@ -84,6 +83,41 @@ class FusionNet(nn.Module):
         return pos_map, neg_map
 
     def __gen_EDM(self, mask, limit=4):
+        edm_list = []
+        for i in range(mask.shape[0]):
+            tmp = mask[i].cpu()
+            # tmp = ndimage.binary_erosion(tmp, structure=np.ones((3, 3))).astype(np.uint8)
+            self.eroded = tmp
+            label, num = ndimage.label(tmp)
+            shape = tmp.shape
+            udm = np.zeros(shape, dtype=np.float32)
+            udm[...] = 255
+            if num != 0:
+                sorted_labels = np.argsort(ndimage.sum(tmp, label, range(1, num + 1)))
+                # test_label = sorted_labels[::-1]+1
+                # print(test_label)
+                for j in range(len(sorted_labels)):
+                    if j >= limit:
+                        break
+                    cur_label = sorted_labels[-(j + 1)] + 1  # Caution for BUG: -(i+1) is crucial
+                    if (label == cur_label).sum() > 100:
+                        # print(label.shape, cur_label)
+                        self.total_clicks += 1
+                        idx_xs, idx_ys = np.where(label == cur_label)
+                        _tmp = np.random.randint(0, len(idx_xs))  # TODO: find the center of ill-segmented region
+                        xs = np.arange(0, shape[1], 1, np.float)
+                        ys = np.arange(0, shape[0], 1, np.float)
+                        ys = ys[:, np.newaxis]
+                        euclid = np.sqrt((xs - idx_xs[_tmp]) ** 2 + (ys - idx_ys[_tmp]) ** 2)
+                        euclid[euclid > 255] = 255
+                        udm = np.minimum(udm, euclid)
+                    else:
+                        break
+            edm_list.append(torch.from_numpy(udm[np.newaxis, np.newaxis, ...].astype(np.float32)/255))
+
+        return torch.cat(edm_list, dim=0)
+
+    def __gen_GCM(self, mask, limit=4):
         edm_list = []
         for i in range(mask.shape[0]):
             tmp = mask[i].cpu()

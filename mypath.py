@@ -3,6 +3,8 @@ class Path(object):
     def db_root_dir(dataset):
         if dataset == 'pascal':
             return 'D:\\datasets\\'
+        elif dataset == 'tmall':
+            return 'D:\\datasets\\Tmall'
         elif dataset == 'sbd':
             return '/path/to/datasets/benchmark_RELEASE/'  # folder that contains dataset/.
         elif dataset == 'cityscapes':

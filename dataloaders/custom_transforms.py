@@ -379,7 +379,7 @@ class ToTensor(object):
             # swap color axis because
             # numpy image: H x W x C
             # torch image: C X H X W
-            if elem == 'crop_gt':
+            if elem == 'crop_gt' or elem == 'gt':
                 tmp = np.squeeze(tmp)
             else:
                 tmp = tmp.transpose((2, 0, 1))

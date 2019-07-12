@@ -5,11 +5,9 @@ from collections import OrderedDict
 from PIL import Image
 import numpy as np
 
-from modeling.correction_net.sbox_net import *
-from modeling.correction_net.sbox_on_deeplab import *
 from modeling.correction_net.fusion_net import *
-from modeling.correction_net.click5 import ClickNet
-from modeling.deeplab1 import DeepLabX
+from modeling.correction_net.click import ClickNet
+from modeling.deeplab import DeepLabX
 from dataloaders import helpers as helpers
 from dataloaders import custom_transforms as tr
 from torchvision import transforms
@@ -22,7 +20,7 @@ device = torch.device("cuda:"+str(gpu_id) if torch.cuda.is_available() else "cpu
 # device = torch.device('cpu')
 
 wrapper_net = FusionNet(DeepLabX(pretrain=False), ClickNet())
-wrapper_net.load_state_dict(torch.load('run/fusion_513_9037.pth.tar')['state_dict'])
+wrapper_net.load_state_dict(torch.load('run/fusion_513_9069.pth.tar')['state_dict'])
 # wrapper_net.sbox_net.load_state_dict(torch.load('run/sbox/sbox_miou_8735.pth.tar', map_location=device)['state_dict'])
 wrapper_net.eval()
 wrapper_net = wrapper_net.to(device)
@@ -80,7 +78,7 @@ def mouse_cb(event, x, y, flag, para):
             clicked = True
 
 
-image = np.array(Image.open('ims/376043.jpg'))
+image = np.array(Image.open('ims/bear.jpg'))
 
 user_interaction = tr.SimUserInput()
 test_transformer = transforms.Compose([
@@ -155,8 +153,6 @@ with torch.no_grad():
             print(pred.shape)
             cmap_sbox = pred2cmap(wrapper_net.prev_pred)
             print(wrapper_net.prev_pred.shape)
-            # camp_final = cv2.resize(cmap_final, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
-            # camp_sbox = cv2.resize(cmap_sbox, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
             pos_map = cv2.resize(pos_map[0][0].data.numpy(), tuple(reversed(crop_image.shape[:2])),
                                  interpolation=cv2.INTER_NEAREST)
             neg_map = cv2.resize(neg_map[0][0].data.numpy(), tuple(reversed(crop_image.shape[:2])),
@@ -164,13 +160,12 @@ with torch.no_grad():
             pred_abs = np.argmax(pred.cpu().numpy(), axis=1)[0].astype(np.uint8)
             pred_abs = cv2.resize(pred_abs, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
             cv2.imshow('mask', cmap_final)
-            if clicked:
-                cmap_click = pred2cmap(click_pred)
-                # camp_click = cv2.resize(cmap_click, tuple(reversed(crop_image.shape[:2])), interpolation=cv2.INTER_NEAREST)
-                cv2.imshow('click', cmap_click)
-            cv2.imshow('sbox', cmap_sbox)
-            cv2.imshow('pos', pos_map)
-            cv2.imshow('neg', neg_map)
+            # if clicked:
+                # cmap_click = pred2cmap(click_pred)
+                # cv2.imshow('click', cmap_click)
+            # cv2.imshow('sbox', cmap_sbox)
+            # cv2.imshow('pos', pos_map)
+            # cv2.imshow('neg', neg_map)
             show_image = crop_image.copy()
             show_image[..., 0] = cv2.add(show_image[..., 0], pred_abs * 255)
             cv2.imshow('result', cv2.cvtColor(show_image, cv2.COLOR_RGB2BGR))
